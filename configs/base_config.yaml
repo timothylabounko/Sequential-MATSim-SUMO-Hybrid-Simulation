@@ -1,0 +1,14 @@
+# MATSim Input
+matsim_output_dir: data/matsim_output
+plans_file: output_plans.xml.gz
+network_file: output_network.xml.gz
+trips_file: output_trips.csv.gz
+
+# Filtering Settings
+modes_keep:
+  - car
+keep_pass_through: true
+scale_factor: 1.0
+
+# Output
+output_dir: results/run_01
