@@ -1,14 +1,20 @@
 # MATSim Input
 matsim_output_dir: data/matsim_output
 plans_file: output_plans.xml.gz
+experienced_plans_file: output_experienced_plans.xml.gz
 network_file: output_network.xml.gz
 trips_file: output_trips.csv.gz
+legs_file: output_legs.csv.gz
+events_file: output_events.xml.gz
+network_file: output_network.xml.gz
+links_file: output_links.csv.gz
 
 # Filtering Settings
 modes_keep:
   - car
 keep_pass_through: true
 scale_factor: 1.0
+boundary_file: data/boundaries/zurich_boundary.geojson
 
 # Output
 output_dir: results/run_01

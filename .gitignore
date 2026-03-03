@@ -2,6 +2,7 @@
 data/
 results/
 tmp/
+notebooks/
 *.xml
 *.xml.gz
 *.csv.gz
