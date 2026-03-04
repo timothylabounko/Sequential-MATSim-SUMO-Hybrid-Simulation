@@ -1,6 +1,12 @@
 import argparse
 import os
+import sys
+from pathlib import Path
 import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from matsim_sumo.matsim_trip_inside_filter import filter_inside_car_trips
 
 
 def load_config(path):
@@ -15,6 +21,7 @@ def validate_inputs(config):
     plans_path = os.path.join(matsim_dir, config["plans_file"])
     network_path = os.path.join(matsim_dir, config["network_file"])
     trips_path = os.path.join(matsim_dir, config["trips_file"])
+    boundary_path = config["boundary_file"]
 
     if not os.path.exists(plans_path):
         raise FileNotFoundError(f"Plans file not found: {plans_path}")
@@ -24,6 +31,9 @@ def validate_inputs(config):
 
     if not os.path.exists(trips_path):
         raise FileNotFoundError(f"Trips file not found: {trips_path}")
+
+    if not os.path.exists(boundary_path):
+        raise FileNotFoundError(f"Boundary file not found: {boundary_path}")
 
     print("✔ MATSim input files found.")
 
@@ -52,8 +62,12 @@ def main():
     validate_inputs(config)
     create_output_dir(config)
 
-    print("\nPipeline setup successful.")
-    print("Next step: implement conversion logic.")
+    trips_path = os.path.join(config["matsim_output_dir"], config["trips_file"])
+    out_path = os.path.join(config["output_dir"], "trips_inside.csv.gz")
+    trips_inside = filter_inside_car_trips(trips_path, config["boundary_file"], out_path)
+    print(f"✔ Wrote {len(trips_inside)} inside-boundary car trips to {out_path}")
+
+    print("\nPipeline step successful.")
 
 
 if __name__ == "__main__":
