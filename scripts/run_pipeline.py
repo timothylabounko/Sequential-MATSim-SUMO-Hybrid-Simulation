@@ -15,29 +15,6 @@ def load_config(path):
         return yaml.safe_load(f)
 
 
-def validate_inputs(config):
-    """Check that required MATSim files exist."""
-    matsim_dir = config["matsim_output_dir"]
-    plans_path = os.path.join(matsim_dir, config["plans_file"])
-    network_path = os.path.join(matsim_dir, config["network_file"])
-    trips_path = os.path.join(matsim_dir, config["trips_file"])
-    boundary_path = config["boundary_file"]
-
-    if not os.path.exists(plans_path):
-        raise FileNotFoundError(f"Plans file not found: {plans_path}")
-
-    if not os.path.exists(network_path):
-        raise FileNotFoundError(f"Network file not found: {network_path}")
-
-    if not os.path.exists(trips_path):
-        raise FileNotFoundError(f"Trips file not found: {trips_path}")
-
-    if not os.path.exists(boundary_path):
-        raise FileNotFoundError(f"Boundary file not found: {boundary_path}")
-
-    print("✔ MATSim input files found.")
-
-
 def create_output_dir(config):
     """Create output directory if it does not exist."""
     output_dir = config["output_dir"]
@@ -59,7 +36,6 @@ def main():
     print("Loaded configuration:")
     print(config)
 
-    validate_inputs(config)
     create_output_dir(config)
 
     trips_path = os.path.join(config["matsim_output_dir"], config["trips_file"])
