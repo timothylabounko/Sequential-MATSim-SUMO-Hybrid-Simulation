@@ -8,3 +8,13 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+## Optional macOS speed dependencies
+
+For faster extraction of large `output_events.xml.gz` files, install:
+
+```bash
+brew install pigz parallel
+```
+
+These are optional. `scripts/extract_entered_link_events_macos.sh` falls back to `gzip` + `awk` if they are not installed.
