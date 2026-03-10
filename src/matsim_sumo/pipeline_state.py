@@ -1,0 +1,43 @@
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Optional
+
+import pandas as pd
+
+
+@dataclass
+class PipelineState:
+    """Shared mutable state passed between pipeline stages."""
+
+    project_root: Path
+    config_path: Path
+    config: dict[str, Any]
+
+    matsim_output_dir: Path
+    output_dir: Path
+    boundary_path: Path
+    network_path: Path
+    plans_path: Path
+    trips_path: Path
+    events_path: Path
+    extract_events_script_path: Path
+    cut_links_csv_path: Path
+    events_cut_csv_path: Path
+    car_legs_path: Path
+    car_legs_cut_path: Path
+    crossing_segments_path: Path
+    crossing_segments_timed_path: Path
+    trips_inside_path: Path
+
+    boundary: Any = None
+    network: Any = None
+    network_geo: Any = None
+    cut_link_ids: Optional[pd.Series] = None
+    cut_link_info: Optional[pd.DataFrame] = None
+    car_legs: Optional[pd.DataFrame] = None
+    car_legs_cut: Optional[pd.DataFrame] = None
+    crossing_segments: Optional[pd.DataFrame] = None
+    events_cut: Optional[pd.DataFrame] = None
+    crossing_events: Optional[pd.DataFrame] = None
+    crossing_segments_timed: Optional[pd.DataFrame] = None
+    trips_inside: Optional[pd.DataFrame] = None

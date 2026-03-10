@@ -11,4 +11,4 @@ mkdir -p "$(dirname "$OUT")"
 printf 'time,type,link_id,vehicle\n' > "$OUT"
 LC_ALL=C pigz -dc "$IN" \
   | LC_ALL=C parallel --pipe --jobs "$JOBS" --block "$BLOCK" \
-    "awk -F'\"' -v CUT='$CUT' 'BEGIN{while((getline l<CUT)>0)k[l]=1} ((\$4==\"entered link\"||\$4==\"left link\")&&\$8~/:(car|truck)$/&&(\$6 in k)){printf \"%s,%s,%s,%s\\n\",\$2,\$4,\$6,\$8}'" >> "$OUT"
+    "awk -F'\"' -v CUT='$CUT' 'BEGIN{while((getline l<CUT)>0)k[l]=1} ((\$4==\"entered link\"||\$4==\"left link\")&&\$8~/:(car|truck|lcv)$/&&(\$6 in k)){printf \"%s,%s,%s,%s\\n\",\$2,\$4,\$6,\$8}'" >> "$OUT"
