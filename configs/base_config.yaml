@@ -10,10 +10,12 @@ links_file: output_links.csv.gz
 
 # Filtering Settings
 modes_keep:
-  - car, truck
+  - car
+  - truck
 keep_pass_through: true
 scale_factor: 1.0
 boundary_file: data/boundaries/zurich_boundary.geojson
 
 # Output
 output_dir: results/run_01
+write_intermediates: false

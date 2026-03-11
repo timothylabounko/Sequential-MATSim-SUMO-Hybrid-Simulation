@@ -9,8 +9,6 @@ import pandas as pd
 class PipelineState:
     """Shared mutable state passed between pipeline stages."""
 
-    project_root: Path
-    config_path: Path
     config: dict[str, Any]
 
     matsim_output_dir: Path

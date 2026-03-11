@@ -33,7 +33,7 @@ def run_event_extraction_script(state: PipelineState) -> None:
         str(state.events_cut_csv_path),
         str(state.cut_links_csv_path),
     ]
-    subprocess.run(cmd, cwd=state.project_root, check=True)
+    subprocess.run(cmd, check=True)
 
 
 def _extract_points(geom) -> list[Point]:

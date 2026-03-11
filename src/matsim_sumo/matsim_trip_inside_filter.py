@@ -1,64 +1,63 @@
-import argparse
 from pathlib import Path
-from typing import Iterable
 
-import geopandas as gpd
-import pandas as pd
-from shapely import points
-
-from matsim_sumo.mode_utils import normalize_modes
 from matsim_sumo.pipeline_state import PipelineState
-
-def filter_inside_car_trips(
-    trips_path,
-    boundary_path=None,
-    out_path=None,
-    modes_keep: Iterable[str] | None = None,
-    boundary=None,
-):
-    trips = pd.read_csv(trips_path, sep=";")
-    if boundary is None:
-        if boundary_path is None:
-            raise ValueError("Either boundary or boundary_path must be provided.")
-        boundary = gpd.read_file(boundary_path).union_all()
-
-    modes = normalize_modes(modes_keep)
-    start_in = gpd.GeoSeries(points(trips["start_x"], trips["start_y"])).covered_by(boundary)
-    end_in = gpd.GeoSeries(points(trips["end_x"], trips["end_y"])).covered_by(boundary)
-    out = trips.loc[trips["main_mode"].isin(modes) & start_in & end_in].copy()
-    if out_path:
-        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-        out.to_csv(out_path, sep=";", index=False, compression="infer")
-    return out
+from matsim_sumo.steps.step_1_boundary_cut_links import run_boundary_cut_links_stage
+from matsim_sumo.steps.step_2_plans_car_legs import run_plans_car_legs_stage
+from matsim_sumo.steps.step_3_crossing_segments import run_crossing_segments_stage
+from matsim_sumo.steps.step_4_segment_timing import run_segment_timing_stage
+from matsim_sumo.steps.step_5_inside_trip_filter import run_inside_trip_filter_stage
 
 
-def run_inside_trip_filter_stage(state: PipelineState) -> None:
-    if state.boundary is None:
-        state.boundary = gpd.read_file(state.boundary_path).union_all()
+def build_pipeline_state(config: dict) -> PipelineState:
+    matsim_output_dir = Path(config["matsim_output_dir"])
+    output_dir = Path(config["output_dir"])
 
-    state.trips_inside = filter_inside_car_trips(
-        trips_path=state.trips_path,
-        out_path=state.trips_inside_path,
-        modes_keep=state.config.get("modes_keep"),
-        boundary=state.boundary,
+    return PipelineState(
+        config=config,
+        matsim_output_dir=matsim_output_dir,
+        output_dir=output_dir,
+        boundary_path=Path(config["boundary_file"]),
+        network_path=matsim_output_dir / config["network_file"],
+        plans_path=matsim_output_dir / config["plans_file"],
+        trips_path=matsim_output_dir / config["trips_file"],
+        events_path=matsim_output_dir / config["events_file"],
+        extract_events_script_path=Path(
+            config.get("extract_events_script", "scripts/extract_entered_link_events_macOS.sh")
+        ),
+        cut_links_csv_path=Path(config.get("cut_links_csv", "data/tmp/cut_links.csv")),
+        events_cut_csv_path=output_dir / config.get(
+            "events_cut_file",
+            "output_events_link_events_car_truck_cut.csv",
+        ),
+        car_legs_path=output_dir / config.get("car_legs_file", "car_legs.csv.gz"),
+        car_legs_cut_path=output_dir / config.get("car_legs_cut_file", "car_legs_cut.csv.gz"),
+        crossing_segments_path=output_dir / config.get("crossing_segments_file", "crossing_segments.csv.gz"),
+        crossing_segments_timed_path=output_dir / config.get(
+            "crossing_segments_timed_file",
+            "crossing_segments_timed.csv.gz",
+        ),
+        trips_inside_path=output_dir / config.get("inside_trips_file", "trips_inside.csv.gz"),
     )
 
 
-def main():
-    p = argparse.ArgumentParser(description="Filter MATSim trips to car trips fully inside a boundary.")
-    p.add_argument("trips_path")
-    p.add_argument("boundary_path")
-    p.add_argument("out_path")
-    p.add_argument("--modes", nargs="*", default=["car"], help="Modes to keep (default: car)")
-    args = p.parse_args()
-    out = filter_inside_car_trips(
-        args.trips_path,
-        boundary_path=args.boundary_path,
-        out_path=args.out_path,
-        modes_keep=args.modes,
-    )
-    print(f"Wrote {len(out)} trips to {args.out_path}")
+def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
+    network_crs = state.config.get("network_crs", "EPSG:2056")
+    run_boundary_cut_links_stage(state, projection=network_crs)
+    run_plans_car_legs_stage(state)
+    run_crossing_segments_stage(state)
 
+    missing_before = int(state.crossing_segments["dep_time"].isna().sum())
+    run_segment_timing_stage(state)
+    missing_after = int(state.crossing_segments_timed["dep_time"].isna().sum())
 
-if __name__ == "__main__":
-    main()
+    run_inside_trip_filter_stage(state)
+
+    return {
+        "cut_links": len(state.cut_link_ids),
+        "plan_legs": len(state.car_legs),
+        "crossing_legs": len(state.car_legs_cut),
+        "crossing_segments": len(state.crossing_segments),
+        "timed_filled": missing_before - missing_after,
+        "timed_unresolved": missing_after,
+        "inside_trips": len(state.trips_inside),
+    }
