@@ -9,6 +9,7 @@ from matsim_sumo.pipeline_state import PipelineState
 LEG_COLUMNS = ["person_id", "mode", "dep_time", "vehicleRefId", "route_links"]
 
 
+# Extract car legs from MATSim plans
 def extract_legs_from_plans(plans_path: Path | str, modes_keep: object = None) -> pd.DataFrame:
     modes = set(modes_keep)
     rows = []
@@ -56,5 +57,5 @@ def run_plans_car_legs_stage(state: PipelineState) -> None:
         plans_path=state.plans_path,
         modes_keep=state.config.get("modes_keep"),
     )
-    if state.config.get("write_intermediates", False) or state.config.get("write_car_legs_csv", False):
+    if state.config.get("write_intermediates", False):
         write_legs_csv(state.car_legs, state.car_legs_path)

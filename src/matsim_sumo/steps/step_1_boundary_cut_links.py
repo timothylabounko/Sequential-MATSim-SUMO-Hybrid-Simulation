@@ -7,6 +7,7 @@ import pandas as pd
 from matsim_sumo.pipeline_state import PipelineState
 
 
+# Compute cut link IDs from network geometry and boundary
 def compute_cut_link_ids_from_geo(geo: gpd.GeoDataFrame, boundary) -> pd.Series:
     inside = geo.geometry.within(boundary)
     outside = geo.geometry.disjoint(boundary)

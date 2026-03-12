@@ -7,16 +7,18 @@ from shapely.geometry import Point
 from matsim_sumo.pipeline_state import PipelineState
 
 
+# Return cut links in route order without duplicates
 def _ordered_unique_hits(route_links: str, cut_set: set[str]) -> list[str]:
-    seen = set()
+    # seen = set()
     hits = []
     for link_id in route_links.split():
-        if link_id in cut_set and link_id not in seen:
-            seen.add(link_id)
+        if link_id in cut_set and link_id: # not in seen:
+            # seen.add(link_id)
             hits.append(link_id)
     return hits
 
 
+# Keep only legs whose route touches at least one cut link
 def filter_legs_touching_cut_links(df_legs: pd.DataFrame, cut_link_ids: pd.Series) -> pd.DataFrame:
     cut_set = set(cut_link_ids.astype(str))
     routes = df_legs["route_links"].fillna("").astype(str).to_numpy()
@@ -34,27 +36,23 @@ def filter_legs_touching_cut_links(df_legs: pd.DataFrame, cut_link_ids: pd.Serie
     return out
 
 
-def _build_link_start_inside_map(network_geo: pd.DataFrame, boundary) -> pd.Series:
-    link_id = network_geo["link_id"].astype(str)
-    starts_inside = network_geo["geometry"].apply(lambda geom: boundary.covers(Point(geom.coords[0])))
-    return pd.Series(starts_inside.to_numpy(), index=link_id)
-
-
+# Add starts_inside by checking only first links that appear in kept legs
 def annotate_leg_entry_side(df_legs_cut: pd.DataFrame, network_geo: pd.DataFrame, boundary) -> pd.DataFrame:
-    link_starts_inside = _build_link_start_inside_map(network_geo, boundary)
     out = df_legs_cut.copy()
-    out["starts_inside"] = (
-        out["route_links"]
-        .fillna("")
-        .str.split()
-        .str[0]
-        .map(link_starts_inside)
-        .fillna(False)
-        .astype(bool)
-    )
+    first_links = out["route_links"].fillna("").astype(str).str.partition(" ")[0]
+    needed = set(first_links[first_links.ne("")])
+
+    geo = network_geo.loc[network_geo["link_id"].astype(str).isin(needed), ["link_id", "geometry"]]
+    starts_map = {
+        str(link_id): boundary.covers(Point(geom.coords[0]))
+        for link_id, geom in zip(geo["link_id"], geo["geometry"])
+    }
+
+    out["starts_inside"] = first_links.map(starts_map).fillna(False).astype(bool)
     return out
 
 
+# Find where each cut link appears in the route
 def _cut_positions_in_route(route: list[str], cuts: list[str]) -> list[int]:
     pos = []
     j = 0
@@ -67,10 +65,8 @@ def _cut_positions_in_route(route: list[str], cuts: list[str]) -> list[int]:
     return pos
 
 
+# Build the inside route intervals between crossings
 def _inside_intervals(route_len: int, cut_positions: list[int], starts_inside: bool) -> list[tuple[int, int]]:
-    """
-    Return [start, end) index intervals that are inside the boundary.
-    """
     intervals = []
     inside = starts_inside
     start_idx = 0 if inside else None
@@ -90,15 +86,13 @@ def _inside_intervals(route_len: int, cut_positions: list[int], starts_inside: b
     return intervals
 
 
+# Label segment as entering, leaving, or pass_through - could be deleted if not needed for analysis
 def _classify_inside_segment(
     interval_start: int,
     interval_end: int,
     route_len: int,
     starts_inside: bool,
 ) -> str:
-    """
-    Classify one inside interval by how it connects to outside parts of the leg.
-    """
     entered_from_outside = not (starts_inside and interval_start == 0)
     leaves_to_outside = interval_end < route_len
 
@@ -111,24 +105,22 @@ def _classify_inside_segment(
     return "leaving"  # Boundary-edge fallback
 
 
+# Split each crossing leg into one or more inside segments
 def split_inside_segments(df_legs_cut: pd.DataFrame) -> pd.DataFrame:
     rows = []
-    drop_cols = {"leg_trav_time", "route_trav_time", "distance"}
-
-    for _, leg in df_legs_cut.iterrows():
-        route = str(leg.get("route_links") or "").split()
-        cuts = str(leg.get("cut_links_hit") or "").split()
+    for leg in df_legs_cut.itertuples(index=False):
+        route = str(getattr(leg, "route_links", "") or "").split()
+        cuts = str(getattr(leg, "cut_links_hit", "") or "").split()
         if not route or not cuts:
             continue
 
-        starts_inside = bool(leg.get("starts_inside", False))
+        starts_inside = bool(getattr(leg, "starts_inside", False))
         cut_positions = _cut_positions_in_route(route, cuts)
         if not cut_positions:
             continue
 
         segs = _inside_intervals(len(route), cut_positions, starts_inside)
-
-        base = {k: v for k, v in leg.to_dict().items() if k not in drop_cols}
+        base = leg._asdict()
 
         for seg_no, (a, b) in enumerate(segs, 1):
             part = route[a:b]
@@ -148,7 +140,7 @@ def split_inside_segments(df_legs_cut: pd.DataFrame) -> pd.DataFrame:
                     "segment_no": seg_no,
                     "crossing_type": segment_crossing_type,
                     "route_links": " ".join(part),
-                    "dep_time": leg["dep_time"] if (seg_no == 1 and starts_inside) else np.nan,
+                    "dep_time": getattr(leg, "dep_time") if (seg_no == 1 and starts_inside) else np.nan,
                     "start_link": part[0],
                     "end_link": part[-1],
                 }
@@ -163,10 +155,7 @@ def write_segments_csv(df: pd.DataFrame, out_path: Path | str) -> None:
     df.to_csv(out, sep=";", index=False, compression="infer")
 
 
-def run_crossing_segments_stage(state: PipelineState) -> None:
-    """
-    Build inside-boundary segments for trips crossing the boundary.
-    """
+def run_crossing_segments_stage(state: PipelineState) -> None:  
     if state.car_legs is None or state.cut_link_ids is None:
         raise ValueError("car_legs and cut_link_ids must be available before crossing stage.")
     if state.network_geo is None or state.boundary is None:
@@ -176,5 +165,7 @@ def run_crossing_segments_stage(state: PipelineState) -> None:
     state.car_legs_cut = annotate_leg_entry_side(state.car_legs_cut, state.network_geo, state.boundary)
     state.crossing_segments = split_inside_segments(state.car_legs_cut)
 
-    write_segments_csv(state.car_legs_cut, state.car_legs_cut_path)
-    write_segments_csv(state.crossing_segments, state.crossing_segments_path)
+    if state.config.get("write_intermediates", False):
+        # write_segments_csv(state.car_legs_cut, state.car_legs_cut_path)
+        write_segments_csv(state.crossing_segments, state.crossing_segments_path)
+

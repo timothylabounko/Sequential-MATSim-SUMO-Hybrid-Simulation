@@ -2,11 +2,12 @@ import subprocess
 from pathlib import Path
 
 import pandas as pd
-from shapely.geometry import LineString, Point
+from shapely.geometry import LineString
 
 from matsim_sumo.pipeline_state import PipelineState
 
 
+# Convert seconds to HH:MM:SS format
 def sec_to_hhmmss(seconds) -> str | float:
     if pd.isna(seconds):
         return float("nan")
@@ -15,13 +16,20 @@ def sec_to_hhmmss(seconds) -> str | float:
     if total < 0:
         total = 0
 
-    h = total // 3600
-    m = (total % 3600) // 60
-    s = total % 60
+    day_seconds = total % 86400
+    h = day_seconds // 3600
+    m = (day_seconds % 3600) // 60
+    s = day_seconds % 60
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
+# Runs shell script to extract cut link events from the full events file
 def run_event_extraction_script(state: PipelineState) -> None:
+    out_csv = Path(state.events_cut_csv_path)
+    # Skip to save time if already exists
+    if out_csv.exists():
+        return
+
     script = Path(state.extract_events_script_path)
     if not script.exists():
         raise FileNotFoundError(f"Event extraction script not found: {script}")
@@ -36,53 +44,23 @@ def run_event_extraction_script(state: PipelineState) -> None:
     subprocess.run(cmd, check=True)
 
 
-def _extract_points(geom) -> list[Point]:
-    if geom.is_empty:
-        return []
-
-    gtype = geom.geom_type
-    if gtype == "Point":
-        return [geom]
-    if gtype == "MultiPoint":
-        return list(geom.geoms)
-    if gtype in {"LineString", "LinearRing"}:
-        coords = list(geom.coords)
-        if not coords:
-            return []
-        return [Point(coords[0]), Point(coords[-1])]
-    if gtype == "MultiLineString":
-        points = []
-        for line in geom.geoms:
-            coords = list(line.coords)
-            if coords:
-                points.extend([Point(coords[0]), Point(coords[-1])])
-        return points
-    if gtype == "GeometryCollection":
-        points = []
-        for part in geom.geoms:
-            points.extend(_extract_points(part))
-        return points
-
-    return []
-
-
-def _first_crossing_fraction(line: LineString, boundary) -> float:
-    inter = line.intersection(boundary.boundary)
-    points = _extract_points(inter)
-    if not points:
+# Finds where along a cut link the boundary crossing occurs, as a fraction of the link length
+def _first_crossing_fraction(line: LineString, boundary_line) -> float:
+    inter = line.intersection(boundary_line)
+    if inter.is_empty:
         return 0.5
 
-    fracs = []
-    for pt in points:
-        try:
-            fracs.append(float(line.project(pt, normalized=True)))
-        except Exception:
-            continue
+    if inter.geom_type == "Point":
+        points = [inter]
+    elif inter.geom_type == "MultiPoint":
+        points = list(inter.geoms)
+    else:
+        return 0.5
 
+    fracs = sorted(max(0.0, min(1.0, float(line.project(pt, normalized=True)))) for pt in points)
     if not fracs:
         return 0.5
 
-    fracs = sorted(max(0.0, min(1.0, f)) for f in fracs)
     interior = [f for f in fracs if 1e-9 < f < 1 - 1e-9]
     if interior:
         return interior[0]
@@ -94,48 +72,55 @@ def _first_crossing_fraction(line: LineString, boundary) -> float:
     return fracs[0]
 
 
+# Build per-cut-link crossing fractions from network geometry
 def build_cut_link_info(state: PipelineState) -> pd.DataFrame:
-    if state.network_geo is None or state.cut_link_ids is None:
-        raise ValueError("network_geo and cut_link_ids must be available before building cut_link_info.")
-    if state.boundary is None:
-        raise ValueError("boundary must be available before building cut_link_info.")
-
     cut_set = set(state.cut_link_ids.astype(str))
-    cut_geo = state.network_geo[state.network_geo["link_id"].astype(str).isin(cut_set)].copy()
-
+    link_id = state.network_geo["link_id"].astype(str)
+    cut_geo = state.network_geo.loc[link_id.isin(cut_set), ["link_id", "geometry"]]
+    boundary_line = state.boundary.boundary
     rows = []
-    for _, row in cut_geo.iterrows():
-        link_id = str(row["link_id"])
-        geom = row["geometry"]
-        frac = _first_crossing_fraction(geom, state.boundary)
-        rows.append({"link_id": link_id, "frac": frac})
+    for row in cut_geo.itertuples(index=False):
+        frac = _first_crossing_fraction(row.geometry, boundary_line)
+        pt = row.geometry.interpolate(frac, normalized=True)
+        rows.append({"link_id": str(row.link_id), "frac": frac, "x_cross": float(pt.x), "y_cross": float(pt.y)})
 
     return pd.DataFrame.from_records(rows)
 
 
+# Build start/end node coordinates for each network link.
+def build_link_endpoint_info(state: PipelineState) -> pd.DataFrame:
+    rows = []
+    for row in state.network_geo.loc[:, ["link_id", "geometry"]].itertuples(index=False):
+        coords = list(row.geometry.coords)
+        if not coords:
+            continue
+        (sx, sy), (ex, ey) = coords[0], coords[-1]
+        rows.append({"link_id": str(row.link_id), "sx": sx, "sy": sy, "ex": ex, "ey": ey})
+    return pd.DataFrame.from_records(rows)
+
+
+# Read extracted cut-link events and normalize key columns
 def read_cut_events(events_cut_csv_path: Path | str) -> pd.DataFrame:
     ev = pd.read_csv(events_cut_csv_path)
     if ev.empty:
         return ev
 
-    ev = ev.copy()
     ev["vehicleRefId"] = ev["vehicle"].astype(str)
     ev["link_id"] = ev["link_id"].astype(str)
     ev["time"] = pd.to_numeric(ev["time"], errors="coerce")
-    ev = ev.dropna(subset=["time"])
-    return ev
+    return ev.dropna(subset=["time"])
 
 
+# Pair entered/left events and compute estimated boundary-crossing timestamps
 def build_crossing_event_times(events_df: pd.DataFrame, cut_link_info: pd.DataFrame) -> pd.DataFrame:
-    entered = events_df.loc[events_df["type"].eq("entered link"), ["vehicleRefId", "link_id", "time"]].copy()
-    entered = entered.sort_values(["vehicleRefId", "link_id", "time"]).reset_index(drop=True)
-    entered["occ"] = entered.groupby(["vehicleRefId", "link_id"]).cumcount()
-    entered = entered.rename(columns={"time": "t_enter"})
+    def _prep(kind: str, time_col: str) -> pd.DataFrame:
+        out = events_df.loc[events_df["type"].eq(kind), ["vehicleRefId", "link_id", "time"]]
+        out = out.sort_values(["vehicleRefId", "link_id", "time"]).reset_index(drop=True)
+        out["occ"] = out.groupby(["vehicleRefId", "link_id"]).cumcount()
+        return out.rename(columns={"time": time_col})
 
-    lefted = events_df.loc[events_df["type"].eq("left link"), ["vehicleRefId", "link_id", "time"]].copy()
-    lefted = lefted.sort_values(["vehicleRefId", "link_id", "time"]).reset_index(drop=True)
-    lefted["occ"] = lefted.groupby(["vehicleRefId", "link_id"]).cumcount()
-    lefted = lefted.rename(columns={"time": "t_left"})
+    entered = _prep("entered link", "t_enter")
+    lefted = _prep("left link", "t_left")
 
     cross = entered.merge(lefted, on=["vehicleRefId", "link_id", "occ"], how="left")
     cross = cross.merge(cut_link_info[["link_id", "frac"]], on="link_id", how="left")
@@ -146,15 +131,14 @@ def build_crossing_event_times(events_df: pd.DataFrame, cut_link_info: pd.DataFr
     return cross
 
 
+# Fill missing segment departure times from matched crossing events
 def fill_segment_dep_time(df_segments: pd.DataFrame, cross_times: pd.DataFrame) -> pd.DataFrame:
     out = df_segments.copy()
     miss = out["dep_time"].isna()
     if not miss.any():
         return out
 
-    fill = out.loc[miss, ["vehicleRefId", "start_link"]].copy()
-    fill["vehicleRefId"] = fill["vehicleRefId"].astype(str)
-    fill["start_link"] = fill["start_link"].astype(str)
+    fill = out.loc[miss, ["vehicleRefId", "start_link"]].astype(str).copy()
     fill["occ"] = fill.groupby(["vehicleRefId", "start_link"]).cumcount()
 
     fill = fill.merge(
@@ -165,6 +149,39 @@ def fill_segment_dep_time(df_segments: pd.DataFrame, cross_times: pd.DataFrame) 
     )
 
     out.loc[miss, "dep_time"] = fill["dep_time_fill"].map(sec_to_hhmmss).to_numpy()
+    return out
+
+
+# Add segment start/end coordinates using cut-point and link endpoint info.
+def add_segment_coordinates(
+    df_segments: pd.DataFrame,
+    link_endpoints: pd.DataFrame,
+    cut_link_info: pd.DataFrame,
+) -> pd.DataFrame:
+    out = df_segments.copy()
+    out["start_link"] = out["start_link"].astype(str)
+    out["end_link"] = out["end_link"].astype(str)
+
+    ep = link_endpoints.set_index("link_id")
+    cut = cut_link_info.set_index("link_id")
+
+    out["start_x"] = out["start_link"].map(ep["sx"])
+    out["start_y"] = out["start_link"].map(ep["sy"])
+    out["end_x"] = out["end_link"].map(ep["ex"])
+    out["end_y"] = out["end_link"].map(ep["ey"])
+
+    use_cut_start = out["crossing_type"].isin(["entering", "pass_through"])
+    use_cut_end = out["crossing_type"].isin(["leaving", "pass_through"])
+
+    out.loc[use_cut_start, "start_x"] = out.loc[use_cut_start, "start_link"].map(cut["x_cross"])
+    out.loc[use_cut_start, "start_y"] = out.loc[use_cut_start, "start_link"].map(cut["y_cross"])
+    out.loc[use_cut_end, "end_x"] = out.loc[use_cut_end, "end_link"].map(cut["x_cross"])
+    out.loc[use_cut_end, "end_y"] = out.loc[use_cut_end, "end_link"].map(cut["y_cross"])
+
+    out["start_x"] = out["start_x"].fillna(out["start_link"].map(ep["sx"]))
+    out["start_y"] = out["start_y"].fillna(out["start_link"].map(ep["sy"]))
+    out["end_x"] = out["end_x"].fillna(out["end_link"].map(ep["ex"]))
+    out["end_y"] = out["end_y"].fillna(out["end_link"].map(ep["ey"]))
     return out
 
 
@@ -180,8 +197,14 @@ def run_segment_timing_stage(state: PipelineState) -> None:
 
     run_event_extraction_script(state)
     state.cut_link_info = build_cut_link_info(state)
+    link_endpoints = build_link_endpoint_info(state)
     state.events_cut = read_cut_events(state.events_cut_csv_path)
     state.crossing_events = build_crossing_event_times(state.events_cut, state.cut_link_info)
     state.crossing_segments_timed = fill_segment_dep_time(state.crossing_segments, state.crossing_events)
+    state.crossing_segments_timed = add_segment_coordinates(
+        state.crossing_segments_timed,
+        link_endpoints=link_endpoints,
+        cut_link_info=state.cut_link_info,
+    )
 
     write_segments_csv(state.crossing_segments_timed, state.crossing_segments_timed_path)

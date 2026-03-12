@@ -1,5 +1,7 @@
 import argparse
+import gzip
 import os
+import shutil
 import sys
 
 import yaml
@@ -36,6 +38,21 @@ def create_output_dir(output_dir):
     os.makedirs(output_dir, exist_ok=True)
     print(f"✔ Output directory ready: {output_dir}")
 
+
+# Writes a plain CSV review copy from a CSV.GZ pipeline output
+def write_review_csv(source_path: Path) -> Path:
+    source = Path(source_path)
+    target = source.with_suffix("") if source.suffix == ".gz" else source.with_name(f"{source.stem}.review.csv")
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    if source.suffix == ".gz":
+        with gzip.open(source, "rt", newline="") as src, open(target, "w", newline="") as dst:
+            shutil.copyfileobj(src, dst)
+    else:
+        shutil.copyfile(source, target)
+    return target
+
+
 # Main function to run the pipeline
 def main():
     parser = argparse.ArgumentParser(description="MATSim → SUMO pipeline")
@@ -59,6 +76,12 @@ def main():
     print(f"✔ Wrote extracted cut events to {state.events_cut_csv_path}")
     print(f"✔ Wrote timed crossing segments to {state.crossing_segments_timed_path}")
     print(f"✔ Wrote {stats['inside_trips']} inside-boundary trips to {state.trips_inside_path}")
+
+    if config.get("write_review_csv", True):
+        timed_review = write_review_csv(state.crossing_segments_timed_path)
+        inside_review = write_review_csv(state.trips_inside_path)
+        print(f"✔ Wrote review CSV: {timed_review}")
+        print(f"✔ Wrote review CSV: {inside_review}")
 
     print("\nPipeline step successful.")
 

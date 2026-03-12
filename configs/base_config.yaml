@@ -19,3 +19,4 @@ boundary_file: data/boundaries/zurich_boundary.geojson
 # Output
 output_dir: results/run_01
 write_intermediates: false
+write_review_csv: true
