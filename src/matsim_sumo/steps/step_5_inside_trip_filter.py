@@ -22,9 +22,11 @@ def filter_inside_car_trips(
         boundary = gpd.read_file(boundary_path).union_all()
 
     modes = list(modes_keep or ["car"])
+    dep_hour = pd.to_numeric(trips["dep_time"].astype(str).str.split(":").str[0], errors="coerce")
+    dep_ok = dep_hour.lt(24)
     start_in = gpd.GeoSeries(points(trips["start_x"], trips["start_y"])).covered_by(boundary)
     end_in = gpd.GeoSeries(points(trips["end_x"], trips["end_y"])).covered_by(boundary)
-    out = trips.loc[trips["main_mode"].isin(modes) & start_in & end_in].copy()
+    out = trips.loc[trips["main_mode"].isin(modes) & dep_ok & start_in & end_in].copy()
     if out_path:
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
         out.to_csv(out_path, sep=";", index=False, compression="infer")
@@ -41,3 +43,4 @@ def run_inside_trip_filter_stage(state: PipelineState) -> None:
         modes_keep=state.config.get("modes_keep"),
         boundary=state.boundary,
     )
+    

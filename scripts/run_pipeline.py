@@ -76,12 +76,15 @@ def main():
     print(f"✔ Wrote extracted cut events to {state.events_cut_csv_path}")
     print(f"✔ Wrote timed crossing segments to {state.crossing_segments_timed_path}")
     print(f"✔ Wrote {stats['inside_trips']} inside-boundary trips to {state.trips_inside_path}")
+    print(f"✔ Wrote {stats['combined_trips']} combined trips to {state.combined_trips_path}")
 
     if config.get("write_review_csv", True):
         timed_review = write_review_csv(state.crossing_segments_timed_path)
         inside_review = write_review_csv(state.trips_inside_path)
+        combined_review = write_review_csv(state.combined_trips_path)
         print(f"✔ Wrote review CSV: {timed_review}")
         print(f"✔ Wrote review CSV: {inside_review}")
+        print(f"✔ Wrote review CSV: {combined_review}")
 
     print("\nPipeline step successful.")
 

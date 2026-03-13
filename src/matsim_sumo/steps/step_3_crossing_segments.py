@@ -9,11 +9,9 @@ from matsim_sumo.pipeline_state import PipelineState
 
 # Return cut links in route order without duplicates
 def _ordered_unique_hits(route_links: str, cut_set: set[str]) -> list[str]:
-    # seen = set()
     hits = []
     for link_id in route_links.split():
-        if link_id in cut_set and link_id: # not in seen:
-            # seen.add(link_id)
+        if link_id in cut_set:
             hits.append(link_id)
     return hits
 
@@ -36,19 +34,35 @@ def filter_legs_touching_cut_links(df_legs: pd.DataFrame, cut_link_ids: pd.Serie
     return out
 
 
-# Add starts_inside by checking only first links that appear in kept legs
-def annotate_leg_entry_side(df_legs_cut: pd.DataFrame, network_geo: pd.DataFrame, boundary) -> pd.DataFrame:
+# Add starts_inside by checking route start side against boundary
+def annotate_leg_entry_side(
+    df_legs_cut: pd.DataFrame,
+    network_geo: pd.DataFrame,
+    boundary,
+    cut_link_ids: pd.Series,
+) -> pd.DataFrame:
     out = df_legs_cut.copy()
-    first_links = out["route_links"].fillna("").astype(str).str.partition(" ")[0]
-    needed = set(first_links[first_links.ne("")])
+    tokens = out["route_links"].fillna("").astype(str).str.split()
+    first_links = tokens.str[0].fillna("")
+    second_links = tokens.str[1].fillna("")
+    needed = set(first_links[first_links.ne("")]).union(set(second_links[second_links.ne("")]))
 
     geo = network_geo.loc[network_geo["link_id"].astype(str).isin(needed), ["link_id", "geometry"]]
-    starts_map = {
+    start_node_inside = {
         str(link_id): boundary.covers(Point(geom.coords[0]))
         for link_id, geom in zip(geo["link_id"], geo["geometry"])
     }
+    link_inside = pd.Series(geo["geometry"].within(boundary).to_numpy(), index=geo["link_id"].astype(str))
+    cut_set = set(cut_link_ids.astype(str))
 
-    out["starts_inside"] = first_links.map(starts_map).fillna(False).astype(bool)
+    starts_inside = first_links.map(start_node_inside).fillna(False)
+
+    # Added fix: if first link is cut link and second link is inside, force start side to outside
+    mask = first_links.isin(cut_set) & second_links.ne("")
+    second_inside = second_links.map(link_inside)
+    starts_inside.loc[mask & second_inside.eq(True)] = False
+
+    out["starts_inside"] = starts_inside.astype(bool)
     return out
 
 
@@ -86,7 +100,7 @@ def _inside_intervals(route_len: int, cut_positions: list[int], starts_inside: b
     return intervals
 
 
-# Label segment as entering, leaving, or pass_through - could be deleted if not needed for analysis
+# Label segment as entering, leaving, or pass_through
 def _classify_inside_segment(
     interval_start: int,
     interval_end: int,
@@ -162,10 +176,13 @@ def run_crossing_segments_stage(state: PipelineState) -> None:
         raise ValueError("network_geo and boundary must be available before crossing stage.")
 
     state.car_legs_cut = filter_legs_touching_cut_links(state.car_legs, state.cut_link_ids)
-    state.car_legs_cut = annotate_leg_entry_side(state.car_legs_cut, state.network_geo, state.boundary)
+    state.car_legs_cut = annotate_leg_entry_side(
+        state.car_legs_cut,
+        state.network_geo,
+        state.boundary,
+        state.cut_link_ids,
+    )
     state.crossing_segments = split_inside_segments(state.car_legs_cut)
 
     if state.config.get("write_intermediates", False):
-        # write_segments_csv(state.car_legs_cut, state.car_legs_cut_path)
         write_segments_csv(state.crossing_segments, state.crossing_segments_path)
-

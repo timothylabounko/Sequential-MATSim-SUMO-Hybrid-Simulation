@@ -148,7 +148,7 @@ def fill_segment_dep_time(df_segments: pd.DataFrame, cross_times: pd.DataFrame) 
         how="left",
     )
 
-    out.loc[miss, "dep_time"] = fill["dep_time_fill"].map(sec_to_hhmmss).to_numpy()
+    out.loc[miss, "dep_time"] = fill["dep_time_fill"].map(sec_to_hhmmss).astype("string").to_numpy()
     return out
 
 

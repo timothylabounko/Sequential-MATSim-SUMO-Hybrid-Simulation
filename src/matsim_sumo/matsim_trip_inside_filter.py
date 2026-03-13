@@ -6,6 +6,7 @@ from matsim_sumo.steps.step_2_plans_car_legs import run_plans_car_legs_stage
 from matsim_sumo.steps.step_3_crossing_segments import run_crossing_segments_stage
 from matsim_sumo.steps.step_4_segment_timing import run_segment_timing_stage
 from matsim_sumo.steps.step_5_inside_trip_filter import run_inside_trip_filter_stage
+from matsim_sumo.steps.step_6_combine_trips import run_combine_trips_stage
 
 
 def build_pipeline_state(config: dict) -> PipelineState:
@@ -37,6 +38,7 @@ def build_pipeline_state(config: dict) -> PipelineState:
             "crossing_segments_timed.csv.gz",
         ),
         trips_inside_path=output_dir / config.get("inside_trips_file", "trips_inside.csv.gz"),
+        combined_trips_path=output_dir / config.get("combined_trips_file", "combined_trips.csv.gz"),
     )
 
 
@@ -51,6 +53,7 @@ def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
     missing_after = int(state.crossing_segments_timed["dep_time"].isna().sum())
 
     run_inside_trip_filter_stage(state)
+    run_combine_trips_stage(state)
 
     return {
         "cut_links": len(state.cut_link_ids),
@@ -60,4 +63,5 @@ def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
         "timed_filled": missing_before - missing_after,
         "timed_unresolved": missing_after,
         "inside_trips": len(state.trips_inside),
+        "combined_trips": len(state.combined_trips),
     }

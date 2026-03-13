@@ -27,6 +27,11 @@ def extract_legs_from_plans(plans_path: Path | str, modes_keep: object = None) -
             if mode not in modes:
                 continue
 
+            # Filter out legs with invalid departure times
+            dep_time = leg_attr.get("dep_time", "24:00:00")
+            if int(dep_time.split(":", 1)[0]) >= 24:
+                continue
+
             route = leg.find("route")
             route_links = (route.text or "").strip() if route is not None else ""
             if not route_links:
@@ -37,7 +42,7 @@ def extract_legs_from_plans(plans_path: Path | str, modes_keep: object = None) -
                 {
                     "person_id": person_id,
                     "mode": mode,
-                    "dep_time": leg_attr.get("dep_time"),
+                    "dep_time": dep_time,
                     "vehicleRefId": route_attr.get("vehicleRefId"),
                     "route_links": route_links,
                 }
