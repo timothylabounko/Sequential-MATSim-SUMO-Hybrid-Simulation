@@ -3,6 +3,7 @@ from pathlib import Path
 import matsim
 import pandas as pd
 
+from matsim_sumo.csv_writer import CsvWriter
 from matsim_sumo.pipeline_state import PipelineState
 
 
@@ -51,16 +52,10 @@ def extract_legs_from_plans(plans_path: Path | str, modes_keep: object = None) -
     return pd.DataFrame.from_records(rows, columns=LEG_COLUMNS)
 
 
-def write_legs_csv(df: pd.DataFrame, out_path: Path | str) -> None:
-    out = Path(out_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(out, sep=";", index=False, compression="infer")
-
-
 def run_plans_car_legs_stage(state: PipelineState) -> None:
     state.car_legs = extract_legs_from_plans(
         plans_path=state.plans_path,
         modes_keep=state.config.get("modes_keep"),
     )
     if state.config.get("write_intermediates", False):
-        write_legs_csv(state.car_legs, state.car_legs_path)
+        CsvWriter.write_df(state.car_legs, state.car_legs_path)

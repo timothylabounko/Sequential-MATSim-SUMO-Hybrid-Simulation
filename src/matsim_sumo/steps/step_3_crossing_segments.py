@@ -1,9 +1,8 @@
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 from shapely.geometry import Point
 
+from matsim_sumo.csv_writer import CsvWriter
 from matsim_sumo.pipeline_state import PipelineState
 
 
@@ -161,14 +160,6 @@ def split_inside_segments(df_legs_cut: pd.DataFrame) -> pd.DataFrame:
             )
 
     return pd.DataFrame.from_records(rows)
-
-
-def write_segments_csv(df: pd.DataFrame, out_path: Path | str) -> None:
-    out = Path(out_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(out, sep=";", index=False, compression="infer")
-
-
 def run_crossing_segments_stage(state: PipelineState) -> None:  
     if state.car_legs is None or state.cut_link_ids is None:
         raise ValueError("car_legs and cut_link_ids must be available before crossing stage.")
@@ -185,4 +176,4 @@ def run_crossing_segments_stage(state: PipelineState) -> None:
     state.crossing_segments = split_inside_segments(state.car_legs_cut)
 
     if state.config.get("write_intermediates", False):
-        write_segments_csv(state.crossing_segments, state.crossing_segments_path)
+        CsvWriter.write_df(state.crossing_segments, state.crossing_segments_path)

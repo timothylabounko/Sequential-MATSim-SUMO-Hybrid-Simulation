@@ -4,6 +4,7 @@ from pathlib import Path
 import pandas as pd
 from shapely.geometry import LineString
 
+from matsim_sumo.csv_writer import CsvWriter
 from matsim_sumo.pipeline_state import PipelineState
 
 
@@ -183,14 +184,6 @@ def add_segment_coordinates(
     out["end_x"] = out["end_x"].fillna(out["end_link"].map(ep["ex"]))
     out["end_y"] = out["end_y"].fillna(out["end_link"].map(ep["ey"]))
     return out
-
-
-def write_segments_csv(df: pd.DataFrame, out_path: Path | str) -> None:
-    out = Path(out_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(out, sep=";", index=False, compression="infer")
-
-
 def run_segment_timing_stage(state: PipelineState) -> None:
     if state.crossing_segments is None:
         raise ValueError("crossing_segments must be available before segment timing stage.")
@@ -207,4 +200,4 @@ def run_segment_timing_stage(state: PipelineState) -> None:
         cut_link_info=state.cut_link_info,
     )
 
-    write_segments_csv(state.crossing_segments_timed, state.crossing_segments_timed_path)
+    CsvWriter.write_df(state.crossing_segments_timed, state.crossing_segments_timed_path)

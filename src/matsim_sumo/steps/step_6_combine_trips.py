@@ -1,7 +1,6 @@
-from pathlib import Path
-
 import pandas as pd
 
+from matsim_sumo.csv_writer import CsvWriter
 from matsim_sumo.pipeline_state import PipelineState
 
 
@@ -27,16 +26,8 @@ def combine_trips(cross: pd.DataFrame, inside: pd.DataFrame) -> pd.DataFrame:
         .assign(crossing_type="inside")[TARGET_COLS]
     )
     return pd.concat([cross_combined, inside_combined], ignore_index=True)
-
-
-def write_combined_csv(df: pd.DataFrame, out_path: Path | str) -> None:
-    out = Path(out_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(out, sep=";", index=False, compression="infer")
-
-
 def run_combine_trips_stage(state: PipelineState) -> None:
     if state.crossing_segments_timed is None or state.trips_inside is None:
         raise ValueError("crossing_segments_timed and trips_inside must be available before combine stage.")
     state.combined_trips = combine_trips(state.crossing_segments_timed, state.trips_inside)
-    write_combined_csv(state.combined_trips, state.combined_trips_path)
+    CsvWriter.write_df(state.combined_trips, state.combined_trips_path)

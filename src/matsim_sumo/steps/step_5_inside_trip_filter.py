@@ -1,10 +1,10 @@
-from pathlib import Path
 from typing import Iterable
 
 import geopandas as gpd
 import pandas as pd
 from shapely import points
 
+from matsim_sumo.csv_writer import CsvWriter
 from matsim_sumo.pipeline_state import PipelineState
 
 
@@ -28,8 +28,7 @@ def filter_inside_car_trips(
     end_in = gpd.GeoSeries(points(trips["end_x"], trips["end_y"])).covered_by(boundary)
     out = trips.loc[trips["main_mode"].isin(modes) & dep_ok & start_in & end_in].copy()
     if out_path:
-        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-        out.to_csv(out_path, sep=";", index=False, compression="infer")
+        CsvWriter.write_df(out, out_path)
     return out
 
 
