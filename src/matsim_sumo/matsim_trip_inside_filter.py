@@ -1,4 +1,5 @@
 from pathlib import Path
+from time import perf_counter
 
 from matsim_sumo.pipeline_state import PipelineState
 from matsim_sumo.steps.step_1_boundary_cut_links import run_boundary_cut_links_stage
@@ -7,6 +8,7 @@ from matsim_sumo.steps.step_3_crossing_segments import run_crossing_segments_sta
 from matsim_sumo.steps.step_4_segment_timing import run_segment_timing_stage
 from matsim_sumo.steps.step_5_inside_trip_filter import run_inside_trip_filter_stage
 from matsim_sumo.steps.step_6_combine_trips import run_combine_trips_stage
+from matsim_sumo.steps.step_7_demand_scaling import run_demand_scaling_stage
 
 
 def build_pipeline_state(config: dict) -> PipelineState:
@@ -39,21 +41,28 @@ def build_pipeline_state(config: dict) -> PipelineState:
         ),
         trips_inside_path=output_dir / config.get("inside_trips_file", "trips_inside.csv.gz"),
         combined_trips_path=output_dir / config.get("combined_trips_file", "combined_trips.csv.gz"),
+        scaled_trips_path=output_dir / config.get("scaled_trips_file", "scaled_trips.csv.gz"),
     )
 
 
 def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
+    def _run_step(label: str, fn) -> None:
+        t0 = perf_counter()
+        fn()
+        print(f"✔ {label} done in {perf_counter() - t0:.2f}s")
+
     network_crs = state.config.get("network_crs", "EPSG:2056")
-    run_boundary_cut_links_stage(state, projection=network_crs)
-    run_plans_car_legs_stage(state)
-    run_crossing_segments_stage(state)
+    _run_step("Step 1 boundary cut links", lambda: run_boundary_cut_links_stage(state, projection=network_crs))
+    _run_step("Step 2 plans car legs", lambda: run_plans_car_legs_stage(state))
+    _run_step("Step 3 crossing segments", lambda: run_crossing_segments_stage(state))
 
     missing_before = int(state.crossing_segments["dep_time"].isna().sum())
-    run_segment_timing_stage(state)
+    _run_step("Step 4 segment timing", lambda: run_segment_timing_stage(state))
     missing_after = int(state.crossing_segments_timed["dep_time"].isna().sum())
 
-    run_inside_trip_filter_stage(state)
-    run_combine_trips_stage(state)
+    _run_step("Step 5 inside trip filter", lambda: run_inside_trip_filter_stage(state))
+    _run_step("Step 6 combine trips", lambda: run_combine_trips_stage(state))
+    _run_step("Step 7 demand scaling", lambda: run_demand_scaling_stage(state))
 
     return {
         "cut_links": len(state.cut_link_ids),
@@ -64,4 +73,5 @@ def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
         "timed_unresolved": missing_after,
         "inside_trips": len(state.trips_inside),
         "combined_trips": len(state.combined_trips),
+        "scaled_trips": len(state.scaled_trips),
     }

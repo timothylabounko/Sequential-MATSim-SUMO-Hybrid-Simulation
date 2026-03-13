@@ -3,6 +3,7 @@ import gzip
 import os
 import shutil
 import sys
+import warnings
 
 import yaml
 
@@ -20,6 +21,10 @@ REQUIRED_CONFIG_KEYS = {
     "trips_file",
     "events_file",
     "output_dir",
+    "scale_factor",
+    "dep_time_jitter_seconds",
+    "coord_jitter_radius_m",
+    "demand_scaling_seed",
 }
 
 # Read YAML config file into a Python dictionary
@@ -55,16 +60,26 @@ def write_review_csv(source_path: Path) -> Path:
 
 # Main function to run the pipeline
 def main():
+    warnings.filterwarnings(
+        "ignore",
+        message=r".*\+init=<authority>:<code>.*",
+        category=FutureWarning,
+        module=r"pyproj\.crs\.crs",
+    )
+
     parser = argparse.ArgumentParser(description="MATSim → SUMO pipeline")
-    parser.add_argument("--config", required=True, help="Path to YAML config file")
+    parser.add_argument(
+        "--config",
+        default="configs/base_config.yaml",
+        help="Path to YAML config file (default: configs/base_config.yaml)",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
     validate_config(config)
     state = build_pipeline_state(config)
 
-    print("Loaded configuration:")
-    print(config)
+    print(f"✔ Loaded config: {args.config}")
 
     create_output_dir(state.output_dir)
 
@@ -77,14 +92,17 @@ def main():
     print(f"✔ Wrote timed crossing segments to {state.crossing_segments_timed_path}")
     print(f"✔ Wrote {stats['inside_trips']} inside-boundary trips to {state.trips_inside_path}")
     print(f"✔ Wrote {stats['combined_trips']} combined trips to {state.combined_trips_path}")
+    print(f"✔ Wrote {stats['scaled_trips']} scaled trips to {state.scaled_trips_path}")
 
     if config.get("write_review_csv", True):
         timed_review = write_review_csv(state.crossing_segments_timed_path)
         inside_review = write_review_csv(state.trips_inside_path)
         combined_review = write_review_csv(state.combined_trips_path)
+        scaled_review = write_review_csv(state.scaled_trips_path)
         print(f"✔ Wrote review CSV: {timed_review}")
         print(f"✔ Wrote review CSV: {inside_review}")
         print(f"✔ Wrote review CSV: {combined_review}")
+        print(f"✔ Wrote review CSV: {scaled_review}")
 
     print("\nPipeline step successful.")
 

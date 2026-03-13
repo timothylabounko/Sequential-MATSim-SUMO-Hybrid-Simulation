@@ -27,6 +27,7 @@ class PipelineState:
     crossing_segments_timed_path: Path
     trips_inside_path: Path
     combined_trips_path: Path
+    scaled_trips_path: Path
 
     boundary: Any = None
     network: Any = None
@@ -41,3 +42,4 @@ class PipelineState:
     crossing_segments_timed: Optional[pd.DataFrame] = None
     trips_inside: Optional[pd.DataFrame] = None
     combined_trips: Optional[pd.DataFrame] = None
+    scaled_trips: Optional[pd.DataFrame] = None

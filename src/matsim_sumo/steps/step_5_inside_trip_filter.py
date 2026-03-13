@@ -15,7 +15,7 @@ def filter_inside_car_trips(
     modes_keep: Iterable[str] | None = None,
     boundary=None,
 ):
-    trips = pd.read_csv(trips_path, sep=";")
+    trips = pd.read_csv(trips_path, sep=";", low_memory=False)
     if boundary is None:
         if boundary_path is None:
             raise ValueError("Either boundary or boundary_path must be provided.")

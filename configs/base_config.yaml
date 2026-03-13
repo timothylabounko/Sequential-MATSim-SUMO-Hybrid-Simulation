@@ -13,7 +13,10 @@ modes_keep:
   - car
   - truck
 keep_pass_through: true
-scale_factor: 1.0
+scale_factor: 10.0
+dep_time_jitter_seconds: 900
+coord_jitter_radius_m: 500.0
+demand_scaling_seed: 42
 boundary_file: data/boundaries/zurich_boundary.geojson
 
 # Output
