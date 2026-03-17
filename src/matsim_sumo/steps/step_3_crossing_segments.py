@@ -147,13 +147,17 @@ def split_inside_segments(df_legs_cut: pd.DataFrame) -> pd.DataFrame:
                 starts_inside=starts_inside,
             )
 
+            # Seed from planned departure only when the leg truly starts inside.
+            # Boundary-start segments (a == 0 on a cut link) are timed from events in step 4.
+            seed_dep_from_leg = seg_no == 1 and starts_inside
+
             rows.append(
                 {
                     **base,
                     "segment_no": seg_no,
                     "crossing_type": segment_crossing_type,
                     "route_links": " ".join(part),
-                    "dep_time": getattr(leg, "dep_time") if (seg_no == 1 and starts_inside) else np.nan,
+                    "dep_time": getattr(leg, "dep_time") if seed_dep_from_leg else np.nan,
                     "start_link": part[0],
                     "end_link": part[-1],
                 }

@@ -114,14 +114,15 @@ def read_cut_events(events_cut_csv_path: Path | str) -> pd.DataFrame:
 
 # Pair entered/left events and compute estimated boundary-crossing timestamps
 def build_crossing_event_times(events_df: pd.DataFrame, cut_link_info: pd.DataFrame) -> pd.DataFrame:
-    def _prep(kind: str, time_col: str) -> pd.DataFrame:
-        out = events_df.loc[events_df["type"].eq(kind), ["vehicleRefId", "link_id", "time"]]
+    def _prep(kinds: list[str], time_col: str) -> pd.DataFrame:
+        out = events_df.loc[events_df["type"].isin(kinds), ["vehicleRefId", "link_id", "time"]]
+        out = out.drop_duplicates(subset=["vehicleRefId", "link_id", "time"])
         out = out.sort_values(["vehicleRefId", "link_id", "time"]).reset_index(drop=True)
         out["occ"] = out.groupby(["vehicleRefId", "link_id"]).cumcount()
         return out.rename(columns={"time": time_col})
 
-    entered = _prep("entered link", "t_enter")
-    lefted = _prep("left link", "t_left")
+    entered = _prep(["entered link", "vehicle enters traffic"], "t_enter")
+    lefted = _prep(["left link", "vehicle leaves traffic"], "t_left")
 
     cross = entered.merge(lefted, on=["vehicleRefId", "link_id", "occ"], how="left")
     cross = cross.merge(cut_link_info[["link_id", "frac"]], on="link_id", how="left")
