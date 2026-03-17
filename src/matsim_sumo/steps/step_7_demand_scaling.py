@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from shapely import covers, points
 
 from matsim_sumo.csv_writer import CsvWriter
 from matsim_sumo.pipeline_state import PipelineState
@@ -28,7 +29,15 @@ def _jitter_dep_time(dep_time: pd.Series, jitter_s: int, rng) -> pd.Series:
     return out
 
 
-def _jitter_xy(df: pd.DataFrame, mask: pd.Series, x_col: str, y_col: str, radius_m: float, rng) -> None:
+def _jitter_xy(
+    df: pd.DataFrame,
+    mask: pd.Series,
+    x_col: str,
+    y_col: str,
+    radius_m: float,
+    rng,
+    boundary=None,
+) -> None:
     if int(mask.sum()) == 0:
         return
     idx = df.index[mask]
@@ -36,10 +45,15 @@ def _jitter_xy(df: pd.DataFrame, mask: pd.Series, x_col: str, y_col: str, radius
     valid = ~np.isnan(xy).any(axis=1)
     if not valid.any():
         return
+    base = xy.copy()
     r = radius_m * np.sqrt(rng.random(valid.sum()))
     a = 2 * np.pi * rng.random(valid.sum())
-    xy[valid, 0] += r * np.cos(a)
-    xy[valid, 1] += r * np.sin(a)
+    xy[valid, 0] = base[valid, 0] + r * np.cos(a)
+    xy[valid, 1] = base[valid, 1] + r * np.sin(a)
+    if boundary is not None:
+        inside = np.asarray(covers(boundary, points(xy[valid, 0], xy[valid, 1])), dtype=bool)
+        pos = np.flatnonzero(valid)
+        xy[pos[~inside]] = base[pos[~inside]]
     df.loc[idx, [x_col, y_col]] = xy
 
 
@@ -49,6 +63,7 @@ def scale_demand(
     dep_time_jitter_s: int,
     coord_radius_m: float,
     seed: int,
+    boundary=None,
 ) -> pd.DataFrame:
     factor = int(round(float(scale_factor)))
     if factor <= 1:
@@ -71,8 +86,8 @@ def scale_demand(
     entering = ctype.eq("entering")
     leaving = ctype.eq("leaving")
 
-    _jitter_xy(clones, inside | leaving, "start_x", "start_y", coord_radius_m, rng)
-    _jitter_xy(clones, inside | entering, "end_x", "end_y", coord_radius_m, rng)
+    _jitter_xy(clones, inside | leaving, "start_x", "start_y", coord_radius_m, rng, boundary=boundary)
+    _jitter_xy(clones, inside | entering, "end_x", "end_y", coord_radius_m, rng, boundary=boundary)
 
     return pd.concat([originals, clones], ignore_index=True)
 
@@ -86,5 +101,6 @@ def run_demand_scaling_stage(state: PipelineState) -> None:
         dep_time_jitter_s=int(state.config["dep_time_jitter_seconds"]),
         coord_radius_m=float(state.config["coord_jitter_radius_m"]),
         seed=int(state.config["demand_scaling_seed"]),
+        boundary=state.boundary,
     )
     CsvWriter.write_df(state.scaled_trips, state.scaled_trips_path)
