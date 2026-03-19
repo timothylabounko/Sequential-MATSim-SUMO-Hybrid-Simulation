@@ -8,3 +8,8 @@ pyproj
 matplotlib
 matsim-tools
 numpy
+sumolib
+rtree
+pandana
+osmnx
+networkx

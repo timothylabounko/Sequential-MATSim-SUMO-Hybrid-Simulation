@@ -9,6 +9,7 @@ from matsim_sumo.steps.step_4_segment_timing import run_segment_timing_stage
 from matsim_sumo.steps.step_5_inside_trip_filter import run_inside_trip_filter_stage
 from matsim_sumo.steps.step_6_combine_trips import run_combine_trips_stage
 from matsim_sumo.steps.step_7_demand_scaling import run_demand_scaling_stage
+from matsim_sumo.steps.step_8_match_sumo_edges import run_match_sumo_edges_stage
 
 
 def build_pipeline_state(config: dict) -> PipelineState:
@@ -27,21 +28,32 @@ def build_pipeline_state(config: dict) -> PipelineState:
         extract_events_script_path=Path(
             config.get("extract_events_script", "scripts/extract_entered_link_events_macOS.sh")
         ),
-        cut_links_csv_path=Path(config.get("cut_links_csv", "data/tmp/cut_links.csv")),
+        cut_links_csv_path=Path(config.get("cut_links_csv", output_dir / "1_cut_links.csv")),
         events_cut_csv_path=output_dir / config.get(
             "events_cut_file",
-            "output_events_link_events_car_truck_cut.csv",
+            "4_output_events_link_events_car_truck_cut.csv",
         ),
-        car_legs_path=output_dir / config.get("car_legs_file", "car_legs.csv.gz"),
-        car_legs_cut_path=output_dir / config.get("car_legs_cut_file", "car_legs_cut.csv.gz"),
-        crossing_segments_path=output_dir / config.get("crossing_segments_file", "crossing_segments.csv.gz"),
+        car_legs_path=output_dir / config.get("car_legs_file", "2_car_legs.csv.gz"),
+        car_legs_cut_path=output_dir / config.get("car_legs_cut_file", "3_car_legs_cut.csv.gz"),
+        crossing_segments_path=output_dir / config.get("crossing_segments_file", "3_crossing_segments.csv.gz"),
         crossing_segments_timed_path=output_dir / config.get(
             "crossing_segments_timed_file",
-            "crossing_segments_timed.csv.gz",
+            "4_crossing_segments_timed.csv.gz",
         ),
-        trips_inside_path=output_dir / config.get("inside_trips_file", "trips_inside.csv.gz"),
-        combined_trips_path=output_dir / config.get("combined_trips_file", "combined_trips.csv.gz"),
-        scaled_trips_path=output_dir / config.get("scaled_trips_file", "scaled_trips.csv.gz"),
+        trips_inside_path=output_dir / config.get("inside_trips_file", "5_trips_inside.csv.gz"),
+        combined_trips_path=output_dir / config.get("combined_trips_file", "6_combined_trips.csv.gz"),
+        scaled_trips_path=output_dir / config.get("scaled_trips_file", "7_scaled_trips.csv.gz"),
+        sumo_network_path=Path(
+            config.get(
+                "sumo_network_path",
+                "data/sumo_scenario/Zurich_Scenario_Transcality/VMOD.net.xml",
+            )
+        ),
+        match_sumo_edges_script_path=Path(
+            config.get("match_sumo_edges_script", "scripts/match_scaled_trips_sumo_edges_macOS.sh")
+        ),
+        scaled_trips_matched_path=output_dir
+        / config.get("scaled_trips_matched_file", "8_scaled_trips_matched.csv.gz"),
     )
 
 
@@ -63,6 +75,7 @@ def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
     _run_step("Step 5 inside trip filter", lambda: run_inside_trip_filter_stage(state))
     _run_step("Step 6 combine trips", lambda: run_combine_trips_stage(state))
     _run_step("Step 7 demand scaling", lambda: run_demand_scaling_stage(state))
+    _run_step("Step 8 match SUMO edges", lambda: run_match_sumo_edges_stage(state))
 
     return {
         "cut_links": len(state.cut_link_ids),
@@ -74,4 +87,6 @@ def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
         "inside_trips": len(state.trips_inside),
         "combined_trips": len(state.combined_trips),
         "scaled_trips": len(state.scaled_trips),
+        "scaled_trips_matched": len(state.scaled_trips_matched),
+        "scaled_trips_match_ok": int(state.scaled_trips_matched["match_ok"].sum()),
     }

@@ -28,6 +28,9 @@ class PipelineState:
     trips_inside_path: Path
     combined_trips_path: Path
     scaled_trips_path: Path
+    sumo_network_path: Path
+    match_sumo_edges_script_path: Path
+    scaled_trips_matched_path: Path
 
     boundary: Any = None
     network: Any = None
@@ -43,3 +46,4 @@ class PipelineState:
     trips_inside: Optional[pd.DataFrame] = None
     combined_trips: Optional[pd.DataFrame] = None
     scaled_trips: Optional[pd.DataFrame] = None
+    scaled_trips_matched: Optional[pd.DataFrame] = None

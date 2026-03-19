@@ -93,16 +93,22 @@ def main():
     print(f"✔ Wrote {stats['inside_trips']} inside-boundary trips to {state.trips_inside_path}")
     print(f"✔ Wrote {stats['combined_trips']} combined trips to {state.combined_trips_path}")
     print(f"✔ Wrote {stats['scaled_trips']} scaled trips to {state.scaled_trips_path}")
+    print(
+        f"✔ Wrote {stats['scaled_trips_matched']} matched scaled trips "
+        f"({stats['scaled_trips_match_ok']} match_ok) to {state.scaled_trips_matched_path}"
+    )
 
     if config.get("write_review_csv", True):
         timed_review = write_review_csv(state.crossing_segments_timed_path)
         inside_review = write_review_csv(state.trips_inside_path)
         combined_review = write_review_csv(state.combined_trips_path)
         scaled_review = write_review_csv(state.scaled_trips_path)
+        matched_review = write_review_csv(state.scaled_trips_matched_path)
         print(f"✔ Wrote review CSV: {timed_review}")
         print(f"✔ Wrote review CSV: {inside_review}")
         print(f"✔ Wrote review CSV: {combined_review}")
         print(f"✔ Wrote review CSV: {scaled_review}")
+        print(f"✔ Wrote review CSV: {matched_review}")
 
     print("\nPipeline step successful.")
 
