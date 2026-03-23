@@ -15,9 +15,9 @@ modes_keep:
 keep_pass_through: true
 scale_factor: 10.0
 dep_time_jitter_seconds: 1800 # 30 minutes
-coord_jitter_radius_m: 500.0
+coord_jitter_radius_m: 300.0
 demand_scaling_seed: 42
-boundary_file: data/boundaries/vmod_boundary.geojson
+boundary_file: data/boundaries/sumo_boundary_transcality.geojson
 
 # Output
 output_dir: results/run_03_transcality_network
@@ -28,10 +28,9 @@ write_review_csv: true
 match_sumo_edges_script: scripts/match_scaled_trips_sumo_edges_macOS.sh
 sumo_network_path: data/sumo_scenario/Zurich_Scenario_Transcality/VMOD.net.xml
 sumo_match_vehicle_col: mode
-sumo_match_radius_m: 150.0
-sumo_match_max_radius_m: 2000.0
+sumo_match_max_radius_m: 300.0
 sumo_match_assume_xy: false
-sumo_match_cache_round_m: 1.0
+sumo_match_same_dist_rel: 0.05
 sumo_vclass_map:
   car: passenger
   truck: truck

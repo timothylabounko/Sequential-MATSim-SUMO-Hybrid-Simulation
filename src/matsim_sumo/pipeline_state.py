@@ -35,6 +35,9 @@ class PipelineState:
     boundary: Any = None
     network: Any = None
     network_geo: Any = None
+    sumo_net: Any = None
+    sumo_edge_indexes: Any = None
+    matsim_link_angles: Optional[dict[str, float]] = None
     cut_link_ids: Optional[pd.Series] = None
     cut_link_info: Optional[pd.DataFrame] = None
     car_legs: Optional[pd.DataFrame] = None
