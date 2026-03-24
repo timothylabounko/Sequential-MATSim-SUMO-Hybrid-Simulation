@@ -12,6 +12,8 @@ from matsim_sumo.steps.step_5_inside_trip_filter import run_inside_trip_filter_s
 from matsim_sumo.steps.step_6_combine_trips import run_combine_trips_stage
 from matsim_sumo.steps.step_7_demand_scaling import run_demand_scaling_stage
 from matsim_sumo.steps.step_8_match_sumo_edges import run_match_sumo_edges_stage
+from matsim_sumo.steps.step_9_write_sumo_trips_xml import run_write_sumo_trips_xml_stage
+from matsim_sumo.steps.step_10_duarouter import run_duarouter_stage
 
 
 def build_pipeline_state(config: dict) -> PipelineState:
@@ -59,6 +61,8 @@ def build_pipeline_state(config: dict) -> PipelineState:
         ),
         scaled_trips_matched_path=output_dir
         / config.get("scaled_trips_matched_file", "8_scaled_trips_matched.csv.gz"),
+        sumo_trips_path=output_dir / config.get("sumo_trips_file", "9_sumo_trips.xml"),
+        sumo_routes_path=output_dir / config.get("sumo_routes_file", "10_sumo_routes.rou.xml"),
     )
 
 
@@ -99,6 +103,8 @@ def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
     _run_step("Step 6 combine trips", lambda: run_combine_trips_stage(state))
     _run_step("Step 7 demand scaling", lambda: run_demand_scaling_stage(state))
     _run_step("Step 8 match SUMO edges", lambda: run_match_sumo_edges_stage(state))
+    _run_step("Step 9 write SUMO trips XML", lambda: run_write_sumo_trips_xml_stage(state))
+    _run_step("Step 10 duarouter routing", lambda: run_duarouter_stage(state))
 
     return {
         "cut_links": len(state.cut_link_ids),
@@ -112,4 +118,7 @@ def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
         "scaled_trips": len(state.scaled_trips),
         "scaled_trips_matched": len(state.scaled_trips_matched),
         "scaled_trips_match_ok": int(state.scaled_trips_matched["match_ok"].sum()),
+        "sumo_trips_xml_rows": int(state.sumo_trips_count or 0),
+        "sumo_routes_rows": int(state.sumo_routes_count or 0),
+        "sumo_routes_pct": float(state.sumo_routes_pct or 0.0),
     }

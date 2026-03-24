@@ -20,7 +20,7 @@ demand_scaling_seed: 42
 boundary_file: data/boundaries/sumo_boundary_transcality.geojson
 
 # Output
-output_dir: results/run_04
+output_dir: results/run_05
 write_intermediates: false
 write_review_csv: true
 
@@ -35,3 +35,7 @@ sumo_match_same_dist_rel: 0.05
 sumo_vclass_map:
   car: passenger
   truck: truck
+
+# Step 10 duarouter
+duarouter_bin: duarouter
+sumo_routes_file: 10_sumo_routes.rou.xml

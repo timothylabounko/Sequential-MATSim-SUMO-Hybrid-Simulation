@@ -245,8 +245,10 @@ def match_trips_direction_aware(
         exy = _lv95_to_sumo_xy(net, ex, ey)
 
     vc = out[vehicle_col].astype(str).map(vclass_map).to_numpy(dtype=object)
-    start_angles = pd.to_numeric(out["start_link"].astype(str).map(matsim_angles), errors="coerce").to_numpy(dtype=float)
-    end_angles = pd.to_numeric(out["end_link"].astype(str).map(matsim_angles), errors="coerce").to_numpy(dtype=float)
+    start_col = "new_start_link" if "new_start_link" in out.columns else "start_link"
+    end_col = "new_end_link" if "new_end_link" in out.columns else "end_link"
+    start_angles = pd.to_numeric(out[start_col].astype(str).map(matsim_angles), errors="coerce").to_numpy(dtype=float)
+    end_angles = pd.to_numeric(out[end_col].astype(str).map(matsim_angles), errors="coerce").to_numpy(dtype=float)
 
     fe, fd = _match_role(
         x=sxy[:, 0],
@@ -282,7 +284,8 @@ def match_trips_direction_aware(
 def run_match_sumo_edges_stage(state: PipelineState) -> None:
     out = Path(state.scaled_trips_matched_path)
     if out.exists():
-        state.scaled_trips_matched = pd.read_csv(out, sep=";", low_memory=False)
+        state.scaled_trips_matched = pd.read_csv(out, sep=";", low_memory=False).sort_values("dep_time").reset_index(drop=True)
+        CsvWriter.write_df(state.scaled_trips_matched, out)
         return
 
     if state.scaled_trips is None:
@@ -312,7 +315,7 @@ def run_match_sumo_edges_stage(state: PipelineState) -> None:
         assume_xy=bool(state.config.get("sumo_match_assume_xy", False)),
         same_dist_rel=float(state.config.get("sumo_match_same_dist_rel", 0.05)),
         angle_margin_deg=float(state.config.get("sumo_match_angle_margin_deg", 10.0)),
-    )
+    ).sort_values("dep_time").reset_index(drop=True)
     CsvWriter.write_df(state.scaled_trips_matched, out)
 
 

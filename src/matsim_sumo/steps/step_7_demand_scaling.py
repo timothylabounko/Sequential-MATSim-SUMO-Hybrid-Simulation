@@ -1,3 +1,4 @@
+import geopandas as gpd
 import numpy as np
 import pandas as pd
 from shapely import covers, points
@@ -58,6 +59,20 @@ def _jitter_xy(
     df.loc[idx, [x_col, y_col]] = xy
 
 
+def _nearest_link_ids(network_geo: gpd.GeoDataFrame, x: pd.Series, y: pd.Series) -> pd.Series:
+    out = pd.Series(pd.NA, index=x.index, dtype="string")
+    xy = pd.DataFrame({"x": pd.to_numeric(x, errors="coerce"), "y": pd.to_numeric(y, errors="coerce")})
+    valid = xy["x"].notna() & xy["y"].notna()
+    if not valid.any():
+        return out
+    pts = gpd.GeoSeries(points(xy.loc[valid, "x"].to_numpy(), xy.loc[valid, "y"].to_numpy()))
+    q_idx, l_idx = network_geo.sindex.nearest(pts, return_all=False)
+    out.loc[xy.index[valid].to_numpy()[np.asarray(q_idx, dtype=int)]] = network_geo["link_id"].astype("string").to_numpy()[
+        np.asarray(l_idx, dtype=int)
+    ]
+    return out
+
+
 def scale_demand(
     combined: pd.DataFrame,
     scale_factor: float,
@@ -65,17 +80,25 @@ def scale_demand(
     coord_radius_m: float,
     seed: int,
     boundary=None,
+    network_geo: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     factor = int(round(float(scale_factor)))
     if factor <= 1:
-        return combined.copy()
+        out = combined.copy()
+        out["new_start_link"] = out["start_link"].astype("string")
+        out["new_end_link"] = out["end_link"].astype("string")
+        return out
 
     rng = np.random.default_rng(seed)
     originals = combined.copy()
+    originals["new_start_link"] = originals["start_link"].astype("string")
+    originals["new_end_link"] = originals["end_link"].astype("string")
     clones = originals.loc[originals.index.repeat(factor - 1)].reset_index(drop=True)
     clones[["start_x", "start_y", "end_x", "end_y"]] = clones[
         ["start_x", "start_y", "end_x", "end_y"]
     ].apply(pd.to_numeric, errors="coerce").astype(float)
+    clones["new_start_link"] = clones["start_link"].astype("string")
+    clones["new_end_link"] = clones["end_link"].astype("string")
 
     father = clones["new_trip_id"].astype("string").str.rsplit("_", n=1).str[0]
     cno = clones.groupby("new_trip_id", sort=False).cumcount().add(1).astype(str)
@@ -89,13 +112,17 @@ def scale_demand(
 
     _jitter_xy(clones, inside | leaving, "start_x", "start_y", coord_radius_m, rng, boundary=boundary)
     _jitter_xy(clones, inside | entering, "end_x", "end_y", coord_radius_m, rng, boundary=boundary)
+    if network_geo is not None:
+        net_geo = network_geo if isinstance(network_geo, gpd.GeoDataFrame) else gpd.GeoDataFrame(network_geo, geometry="geometry")
+        clones["new_start_link"] = _nearest_link_ids(net_geo, clones["start_x"], clones["start_y"]).fillna(clones["new_start_link"])
+        clones["new_end_link"] = _nearest_link_ids(net_geo, clones["end_x"], clones["end_y"]).fillna(clones["new_end_link"])
 
     return pd.concat([originals, clones], ignore_index=True)
 
 
 def run_demand_scaling_stage(state: PipelineState) -> None:
-    if state.combined_trips is None:
-        raise ValueError("combined_trips must be available before demand scaling stage.")
+    if state.combined_trips is None or state.network_geo is None:
+        raise ValueError("combined_trips and network_geo must be available before demand scaling stage.")
     state.scaled_trips = scale_demand(
         state.combined_trips,
         scale_factor=float(state.config["scale_factor"]),
@@ -103,6 +130,17 @@ def run_demand_scaling_stage(state: PipelineState) -> None:
         coord_radius_m=float(state.config["coord_jitter_radius_m"]),
         seed=int(state.config["demand_scaling_seed"]),
         boundary=state.boundary,
+        network_geo=state.network_geo,
+    )
+
+    # Log some stats about how many links changed due to jittering, especially for clones
+    s = state.scaled_trips
+    start_changed = s["new_start_link"].astype("string").ne(s["start_link"].astype("string"))
+    end_changed = s["new_end_link"].astype("string").ne(s["end_link"].astype("string"))
+    any_changed = start_changed | end_changed
+    pct = lambda m: (100.0 * float(m.mean())) if len(m) else 0.0
+    print(
+        f"INFO Step 7 link changes: all(start={pct(start_changed):.2f}%, end={pct(end_changed):.2f}%, any={pct(any_changed):.2f}%) "
     )
     CsvWriter.write_df(state.scaled_trips, state.scaled_trips_path)
     run_scaled_trips_plot_stage(state)

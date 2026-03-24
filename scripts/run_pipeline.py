@@ -97,6 +97,8 @@ def main():
         f"✔ Wrote {stats['scaled_trips_matched']} matched scaled trips "
         f"({stats['scaled_trips_match_ok']} match_ok) to {state.scaled_trips_matched_path}"
     )
+    print(f"✔ Wrote {stats['sumo_trips_xml_rows']} SUMO trips XML rows to {state.sumo_trips_path}")
+    print(f"✔ Wrote {stats['sumo_routes_rows']} routed trips ({stats['sumo_routes_pct']:.2f}%) to {state.sumo_routes_path}")
 
     if config.get("write_review_csv", True):
         timed_review = write_review_csv(state.crossing_segments_timed_path)
