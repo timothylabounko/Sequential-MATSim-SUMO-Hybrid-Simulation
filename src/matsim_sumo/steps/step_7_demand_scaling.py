@@ -4,6 +4,7 @@ from shapely import covers, points
 
 from matsim_sumo.csv_writer import CsvWriter
 from matsim_sumo.pipeline_state import PipelineState
+from matsim_sumo.plot.scaled_trips_start_end_plots import run_scaled_trips_plot_stage
 
 
 def _jitter_dep_time(dep_time: pd.Series, jitter_s: int, rng) -> pd.Series:
@@ -104,3 +105,4 @@ def run_demand_scaling_stage(state: PipelineState) -> None:
         boundary=state.boundary,
     )
     CsvWriter.write_df(state.scaled_trips, state.scaled_trips_path)
+    run_scaled_trips_plot_stage(state)

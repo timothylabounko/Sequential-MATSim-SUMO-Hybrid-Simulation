@@ -12,7 +12,6 @@ notebooks/
 *.net.xml*
 *.rou.xml*
 *.trip.xml*
-src/matsim_sumo/network_preprocessing/
 
 # Python + environment
 .venv/

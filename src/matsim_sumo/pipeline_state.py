@@ -29,6 +29,7 @@ class PipelineState:
     combined_trips_path: Path
     scaled_trips_path: Path
     sumo_network_path: Path
+    sumo_network_lv95_path: Path
     match_sumo_edges_script_path: Path
     scaled_trips_matched_path: Path
 
@@ -36,6 +37,7 @@ class PipelineState:
     network: Any = None
     network_geo: Any = None
     sumo_net: Any = None
+    sumo_network_geo: Any = None
     sumo_edge_indexes: Any = None
     matsim_link_angles: Optional[dict[str, float]] = None
     cut_link_ids: Optional[pd.Series] = None

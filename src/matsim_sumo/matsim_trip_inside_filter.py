@@ -1,6 +1,8 @@
 from pathlib import Path
 from time import perf_counter
 
+from matsim_sumo.network_preprocessing.network_preprocessing import preprocess_sumo_network_to_lv95
+from matsim_sumo.network_preprocessing.sumo_boundary import compute_and_save_sumo_boundary
 from matsim_sumo.pipeline_state import PipelineState
 from matsim_sumo.steps.step_1_boundary_cut_links import run_boundary_cut_links_stage
 from matsim_sumo.steps.step_2_plans_car_legs import run_plans_car_legs_stage
@@ -49,6 +51,9 @@ def build_pipeline_state(config: dict) -> PipelineState:
                 "data/sumo_scenario/Zurich_Scenario_Transcality/VMOD.net.xml",
             )
         ),
+        sumo_network_lv95_path=Path(
+            config.get("sumo_network_lv95_tmp_file", output_dir / "tmp/0_sumo_network_lv95.geojson")
+        ),
         match_sumo_edges_script_path=Path(
             config.get("match_sumo_edges_script", "scripts/match_scaled_trips_sumo_edges_macOS.sh")
         ),
@@ -64,6 +69,24 @@ def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
         print(f"✔ {label} done in {perf_counter() - t0:.2f}s")
 
     network_crs = state.config.get("network_crs", "EPSG:2056")
+    vclasses = tuple(dict.fromkeys(state.config["sumo_vclass_map"].values()))
+
+    # Step 0: SUMO network preprocessing and boundary creation
+    def _run_sumo_network_preprocessing() -> None:
+        state.sumo_net, state.sumo_network_geo = preprocess_sumo_network_to_lv95(
+            state.sumo_network_path,
+            vclasses,
+            state.sumo_network_lv95_path,
+        )
+
+    _run_step("Step 0 SUMO network preprocessing", _run_sumo_network_preprocessing)
+    if not state.boundary_path.exists():
+        _run_step(
+            "Step 0 SUMO boundary",
+            lambda: compute_and_save_sumo_boundary(state.sumo_network_geo, state.boundary_path),
+        )
+    else:
+        print(f"✔ Step 0 SUMO boundary skipped (exists): {state.boundary_path}")
     _run_step("Step 1 boundary cut links", lambda: run_boundary_cut_links_stage(state, projection=network_crs))
     _run_step("Step 2 plans car legs", lambda: run_plans_car_legs_stage(state))
     _run_step("Step 3 crossing segments", lambda: run_crossing_segments_stage(state))
