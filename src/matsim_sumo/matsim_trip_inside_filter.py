@@ -11,7 +11,7 @@ from matsim_sumo.steps.step_4_segment_timing import run_segment_timing_stage
 from matsim_sumo.steps.step_5_inside_trip_filter import run_inside_trip_filter_stage
 from matsim_sumo.steps.step_6_combine_trips import run_combine_trips_stage
 from matsim_sumo.steps.step_7_demand_scaling import run_demand_scaling_stage
-from matsim_sumo.steps.step_8_match_sumo_edges import run_match_sumo_edges_stage
+from matsim_sumo.steps.step_8_match_sumo_edges_simple import run_match_sumo_edges_stage
 from matsim_sumo.steps.step_9_write_sumo_trips_xml import run_write_sumo_trips_xml_stage
 from matsim_sumo.steps.step_10_duarouter import run_duarouter_stage
 
@@ -47,22 +47,15 @@ def build_pipeline_state(config: dict) -> PipelineState:
         trips_inside_path=output_dir / config.get("inside_trips_file", "5_trips_inside.csv.gz"),
         combined_trips_path=output_dir / config.get("combined_trips_file", "6_combined_trips.csv.gz"),
         scaled_trips_path=output_dir / config.get("scaled_trips_file", "7_scaled_trips.csv.gz"),
-        sumo_network_path=Path(
-            config.get(
-                "sumo_network_path",
-                "data/sumo_scenario/Zurich_Scenario_Transcality/VMOD.net.xml",
-            )
-        ),
-        sumo_network_lv95_path=Path(
-            config.get("sumo_network_lv95_tmp_file", output_dir / "tmp/0_sumo_network_lv95.geojson")
-        ),
-        match_sumo_edges_script_path=Path(
-            config.get("match_sumo_edges_script", "scripts/match_scaled_trips_sumo_edges_macOS.sh")
-        ),
+        sumo_network_path=Path(config["sumo_network_path"]),
+        sumo_network_lv95_path=Path(config["sumo_network_lv95_tmp_file"]),
+        match_sumo_edges_script_path=Path(config["match_sumo_edges_script"]),
         scaled_trips_matched_path=output_dir
         / config.get("scaled_trips_matched_file", "8_scaled_trips_matched.csv.gz"),
         sumo_trips_path=output_dir / config.get("sumo_trips_file", "9_sumo_trips.xml"),
-        sumo_routes_path=output_dir / config.get("sumo_routes_file", "10_sumo_routes.rou.xml"),
+        sumo_routes_path=output_dir / config["sumo_routes_file"],
+        sumo_unrouted_trips_path=output_dir / config["sumo_unrouted_trips_file"],
+        duarouter_log_path=output_dir / config["duarouter_log_file"],
     )
 
 
@@ -121,4 +114,6 @@ def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
         "sumo_trips_xml_rows": int(state.sumo_trips_count or 0),
         "sumo_routes_rows": int(state.sumo_routes_count or 0),
         "sumo_routes_pct": float(state.sumo_routes_pct or 0.0),
+        "sumo_unrouted_rows": int(state.sumo_unrouted_count or 0),
+        "sumo_unrouted_pct": float(state.sumo_unrouted_pct or 0.0),
     }

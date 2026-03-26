@@ -39,7 +39,7 @@ def run_inside_trip_filter_stage(state: PipelineState) -> None:
     state.trips_inside = filter_inside_car_trips(
         trips_path=state.trips_path,
         out_path=state.trips_inside_path,
-        modes_keep=state.config.get("modes_keep"),
+        modes_keep=state.config["modes_keep"],
         boundary=state.boundary,
     )
     

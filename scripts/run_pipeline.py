@@ -21,10 +21,28 @@ REQUIRED_CONFIG_KEYS = {
     "trips_file",
     "events_file",
     "output_dir",
+    "modes_keep",
+    "write_intermediates",
+    "write_review_csv",
     "scale_factor",
     "dep_time_jitter_seconds",
     "coord_jitter_radius_m",
     "demand_scaling_seed",
+    "amenity_kdtree_enabled",
+    "amenities_path",
+    "amenities_sep",
+    "amenities_x_col",
+    "amenities_y_col",
+    "amenities_weight_col",
+    "sumo_network_path",
+    "sumo_network_lv95_tmp_file",
+    "match_sumo_edges_script",
+    "sumo_match_max_radius_m",
+    "sumo_vclass_map",
+    "duarouter_bin",
+    "sumo_routes_file",
+    "sumo_unrouted_trips_file",
+    "duarouter_log_file",
 }
 
 # Read YAML config file into a Python dictionary
@@ -99,8 +117,13 @@ def main():
     )
     print(f"✔ Wrote {stats['sumo_trips_xml_rows']} SUMO trips XML rows to {state.sumo_trips_path}")
     print(f"✔ Wrote {stats['sumo_routes_rows']} routed trips ({stats['sumo_routes_pct']:.2f}%) to {state.sumo_routes_path}")
+    print(
+        f"✔ Wrote {stats['sumo_unrouted_rows']} unrouted trips "
+        f"({stats['sumo_unrouted_pct']:.2f}%) to {state.sumo_unrouted_trips_path}"
+    )
+    print(f"✔ Wrote duarouter log to {state.duarouter_log_path}")
 
-    if config.get("write_review_csv", True):
+    if config["write_review_csv"]:
         timed_review = write_review_csv(state.crossing_segments_timed_path)
         inside_review = write_review_csv(state.trips_inside_path)
         combined_review = write_review_csv(state.combined_trips_path)

@@ -55,7 +55,7 @@ def extract_legs_from_plans(plans_path: Path | str, modes_keep: object = None) -
 def run_plans_car_legs_stage(state: PipelineState) -> None:
     state.car_legs = extract_legs_from_plans(
         plans_path=state.plans_path,
-        modes_keep=state.config.get("modes_keep"),
+        modes_keep=state.config["modes_keep"],
     )
-    if state.config.get("write_intermediates", False):
+    if state.config["write_intermediates"]:
         CsvWriter.write_df(state.car_legs, state.car_legs_path)

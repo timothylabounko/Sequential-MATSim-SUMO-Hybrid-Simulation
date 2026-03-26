@@ -1,8 +1,11 @@
+from pathlib import Path
+
 import geopandas as gpd
 import numpy as np
 import pandas as pd
 from shapely import covers, points
 
+from matsim_sumo.amenities_kdtree import AmenitiesKDTree
 from matsim_sumo.csv_writer import CsvWriter
 from matsim_sumo.pipeline_state import PipelineState
 from matsim_sumo.plot.scaled_trips_start_end_plots import run_scaled_trips_plot_stage
@@ -39,6 +42,7 @@ def _jitter_xy(
     radius_m: float,
     rng,
     boundary=None,
+    amenities: AmenitiesKDTree | None = None,
 ) -> None:
     if int(mask.sum()) == 0:
         return
@@ -48,13 +52,20 @@ def _jitter_xy(
     if not valid.any():
         return
     base = xy.copy()
-    r = radius_m * np.sqrt(rng.random(valid.sum()))
-    a = 2 * np.pi * rng.random(valid.sum())
-    xy[valid, 0] = base[valid, 0] + r * np.cos(a)
-    xy[valid, 1] = base[valid, 1] + r * np.sin(a)
+    pos = np.flatnonzero(valid)
+    take = np.zeros(valid.sum(), dtype=bool)
+    if amenities is not None:
+        ax, ay, take = amenities.sample_within_radius(base[valid, 0], base[valid, 1], radius_m, rng)
+        xy[pos[take], 0] = ax[take]
+        xy[pos[take], 1] = ay[take]
+    miss = ~take
+    if miss.any():
+        r = radius_m * np.sqrt(rng.random(int(miss.sum())))
+        a = 2 * np.pi * rng.random(int(miss.sum()))
+        xy[pos[miss], 0] = base[pos[miss], 0] + r * np.cos(a)
+        xy[pos[miss], 1] = base[pos[miss], 1] + r * np.sin(a)
     if boundary is not None:
         inside = np.asarray(covers(boundary, points(xy[valid, 0], xy[valid, 1])), dtype=bool)
-        pos = np.flatnonzero(valid)
         xy[pos[~inside]] = base[pos[~inside]]
     df.loc[idx, [x_col, y_col]] = xy
 
@@ -81,6 +92,7 @@ def scale_demand(
     seed: int,
     boundary=None,
     network_geo: pd.DataFrame | None = None,
+    amenities: AmenitiesKDTree | None = None,
 ) -> pd.DataFrame:
     factor = int(round(float(scale_factor)))
     if factor <= 1:
@@ -110,8 +122,8 @@ def scale_demand(
     entering = ctype.eq("entering")
     leaving = ctype.eq("leaving")
 
-    _jitter_xy(clones, inside | leaving, "start_x", "start_y", coord_radius_m, rng, boundary=boundary)
-    _jitter_xy(clones, inside | entering, "end_x", "end_y", coord_radius_m, rng, boundary=boundary)
+    _jitter_xy(clones, inside | leaving, "start_x", "start_y", coord_radius_m, rng, boundary=boundary, amenities=amenities)
+    _jitter_xy(clones, inside | entering, "end_x", "end_y", coord_radius_m, rng, boundary=boundary, amenities=amenities)
     if network_geo is not None:
         net_geo = network_geo if isinstance(network_geo, gpd.GeoDataFrame) else gpd.GeoDataFrame(network_geo, geometry="geometry")
         clones["new_start_link"] = _nearest_link_ids(net_geo, clones["start_x"], clones["start_y"]).fillna(clones["new_start_link"])
@@ -123,6 +135,19 @@ def scale_demand(
 def run_demand_scaling_stage(state: PipelineState) -> None:
     if state.combined_trips is None or state.network_geo is None:
         raise ValueError("combined_trips and network_geo must be available before demand scaling stage.")
+    amenities = None
+    if state.config["amenity_kdtree_enabled"]:
+        path = Path(state.config["amenities_path"])
+        if not path.exists():
+            raise FileNotFoundError(f"Amenities CSV not found: {path}")
+        amenities = AmenitiesKDTree.from_csv(
+            path,
+            sep=str(state.config["amenities_sep"]),
+            x_col=str(state.config["amenities_x_col"]),
+            y_col=str(state.config["amenities_y_col"]),
+            weight_col=str(state.config["amenities_weight_col"]),
+            boundary_path=state.boundary_path,
+        )
     state.scaled_trips = scale_demand(
         state.combined_trips,
         scale_factor=float(state.config["scale_factor"]),
@@ -131,6 +156,7 @@ def run_demand_scaling_stage(state: PipelineState) -> None:
         seed=int(state.config["demand_scaling_seed"]),
         boundary=state.boundary,
         network_geo=state.network_geo,
+        amenities=amenities,
     )
 
     # Log some stats about how many links changed due to jittering, especially for clones

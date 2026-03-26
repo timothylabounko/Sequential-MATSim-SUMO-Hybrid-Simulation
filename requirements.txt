@@ -8,6 +8,7 @@ pyproj
 matplotlib
 matsim-tools
 numpy
+scipy
 sumolib
 rtree
 pandana

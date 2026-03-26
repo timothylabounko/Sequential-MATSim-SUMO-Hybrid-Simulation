@@ -34,6 +34,8 @@ class PipelineState:
     scaled_trips_matched_path: Path
     sumo_trips_path: Path
     sumo_routes_path: Path
+    sumo_unrouted_trips_path: Path
+    duarouter_log_path: Path
 
     boundary: Any = None
     network: Any = None
@@ -59,3 +61,5 @@ class PipelineState:
     sumo_routes_input_count: Optional[int] = None
     sumo_routes_count: Optional[int] = None
     sumo_routes_pct: Optional[float] = None
+    sumo_unrouted_count: Optional[int] = None
+    sumo_unrouted_pct: Optional[float] = None

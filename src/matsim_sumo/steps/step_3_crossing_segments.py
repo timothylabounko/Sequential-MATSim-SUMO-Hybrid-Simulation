@@ -179,5 +179,5 @@ def run_crossing_segments_stage(state: PipelineState) -> None:
     )
     state.crossing_segments = split_inside_segments(state.car_legs_cut)
 
-    if state.config.get("write_intermediates", False):
+    if state.config["write_intermediates"]:
         CsvWriter.write_df(state.crossing_segments, state.crossing_segments_path)
