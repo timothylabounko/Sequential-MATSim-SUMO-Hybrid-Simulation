@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from matsim_sumo.csv_writer import CsvWriter
 from matsim_sumo.matsim_trip_inside_filter import build_pipeline_state, run_pipeline_steps
 
 REQUIRED_CONFIG_KEYS = {
@@ -94,7 +95,9 @@ def main():
     args = parser.parse_args()
 
     config = load_config(args.config)
+    config.setdefault("csv_gzip_compresslevel", 1)
     validate_config(config)
+    CsvWriter.set_gzip_compresslevel(int(config["csv_gzip_compresslevel"]))
     state = build_pipeline_state(config)
 
     print(f"✔ Loaded config: {args.config}")

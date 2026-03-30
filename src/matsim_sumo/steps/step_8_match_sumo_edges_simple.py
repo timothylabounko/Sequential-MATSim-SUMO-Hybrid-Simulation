@@ -7,6 +7,8 @@ import pandas as pd
 from matsim_sumo.csv_writer import CsvWriter
 from matsim_sumo.pipeline_state import PipelineState
 
+EDGE_CONNECTION_DEPTH = 4
+
 
 def _unit_vector_xy(x0: float, y0: float, x1: float, y1: float) -> tuple[float, float]:
     dx = float(x1) - float(x0)
@@ -53,7 +55,9 @@ def _nearest_edges(
     if not valid.any():
         return edge, dist
 
-    link_col = "start_link" if point_type == "start" else "end_link"
+    link_col = "new_start_link" if point_type == "start" else "new_end_link"
+    if link_col not in trips.columns:
+        link_col = "start_link" if point_type == "start" else "end_link"
     matsim_vec = trips.loc[valid, link_col].astype(str).map(link_vectors)
     pts = gpd.GeoDataFrame(
         {
@@ -65,6 +69,7 @@ def _nearest_edges(
         crs=edges.crs,
     )
 
+    # Stage A: absolute nearest edge (fallback).
     nearest = gpd.sjoin_nearest(
         pts,
         edges[["edge_id", "edge_dx", "edge_dy", "geometry"]],
@@ -76,7 +81,14 @@ def _nearest_edges(
     edge.loc[nearest["row_id"].to_numpy()] = nearest["edge_id"].to_numpy()
     dist.loc[nearest["row_id"].to_numpy()] = nearest["dist_m"].to_numpy(dtype=float)
 
-    pairs = edges.sindex.query(pts.geometry, predicate="dwithin", distance=float(max_radius_m))
+    # Stage B: only rows with wrong nearest direction; check next-nearest candidates (max 5).
+    dot0 = nearest["mvx"] * nearest["edge_dx"] + nearest["mvy"] * nearest["edge_dy"]
+    need_rows = nearest.loc[dot0.notna() & (dot0 < 0.985), "row_id"].to_numpy(dtype=int) # +- 10 degrees tolerance
+    if need_rows.size == 0:
+        return edge, dist
+
+    need_pts = pts.set_index("row_id").loc[need_rows].reset_index()
+    pairs = edges.sindex.query(need_pts.geometry, predicate="dwithin", distance=float(max_radius_m))
     if pairs.size == 0:
         return edge, dist
 
@@ -84,18 +96,18 @@ def _nearest_edges(
     e_idx = np.asarray(pairs[1], dtype=int)
     cand = pd.DataFrame(
         {
-            "row_id": pts["row_id"].to_numpy()[q_idx],
-            "mvx": pts["mvx"].to_numpy()[q_idx],
-            "mvy": pts["mvy"].to_numpy()[q_idx],
+            "row_id": need_pts["row_id"].to_numpy()[q_idx],
+            "mvx": need_pts["mvx"].to_numpy()[q_idx],
+            "mvy": need_pts["mvy"].to_numpy()[q_idx],
             "edge_id": edges["edge_id"].to_numpy()[e_idx],
             "edge_dx": edges["edge_dx"].to_numpy()[e_idx],
             "edge_dy": edges["edge_dy"].to_numpy()[e_idx],
         }
     )
-    cand["dist_m"] = pts.geometry.iloc[q_idx].distance(edges.geometry.iloc[e_idx], align=False).to_numpy(dtype=float)
+    cand["dist_m"] = need_pts.geometry.iloc[q_idx].distance(edges.geometry.iloc[e_idx], align=False).to_numpy(dtype=float)
     cand = cand.sort_values(["row_id", "dist_m"]).groupby("row_id", sort=False).head(5)
     cand["dot"] = cand["mvx"] * cand["edge_dx"] + cand["mvy"] * cand["edge_dy"]
-    cand = cand[(cand["dot"].isna()) | (cand["dot"] >= -0.1)]
+    cand = cand[cand["dot"] >= 0.5]
     if cand.empty:
         return edge, dist
 
@@ -110,6 +122,8 @@ def _match_trips(
     edges: gpd.GeoDataFrame,
     max_radius_m: float,
     link_vectors: dict[str, tuple[float, float]],
+    start_edge_ids: set[str],
+    end_edge_ids: set[str],
 ) -> pd.DataFrame:
     out = trips.copy()
     edge_vec = edges.geometry.map(
@@ -118,9 +132,11 @@ def _match_trips(
     edges = edges.copy()
     edges["edge_dx"] = edge_vec.map(lambda v: v[0]).to_numpy(dtype=float)
     edges["edge_dy"] = edge_vec.map(lambda v: v[1]).to_numpy(dtype=float)
+    start_edges = edges[edges["edge_id"].isin(start_edge_ids)].copy()
+    end_edges = edges[edges["edge_id"].isin(end_edge_ids)].copy()
     out["from_edge"], out["from_edge_dist_m"] = _nearest_edges(
         out,
-        edges,
+        start_edges,
         "start_x",
         "start_y",
         max_radius_m,
@@ -129,7 +145,7 @@ def _match_trips(
     )
     out["to_edge"], out["to_edge_dist_m"] = _nearest_edges(
         out,
-        edges,
+        end_edges,
         "end_x",
         "end_y",
         max_radius_m,
@@ -152,26 +168,44 @@ def _load_sumo_edges(state: PipelineState) -> gpd.GeoDataFrame:
     return geo[["edge_id", "geometry"]].copy()
 
 
+def _eligible_edge_ids(state: PipelineState, valid_edge_ids: set[str]) -> tuple[set[str], set[str]]:
+    if state.sumo_net is None:
+        raise ValueError("state.sumo_net must be available before step 8.")
+    out_neighbors: dict[str, set[str]] = {}
+    in_neighbors: dict[str, set[str]] = {}
+    for e in state.sumo_net.getEdges(withInternal=False):
+        eid = e.getID()
+        if eid not in valid_edge_ids:
+            continue
+        out_neighbors[eid] = {n.getID() for n in e.getOutgoing().keys() if n.getID() in valid_edge_ids}
+        in_neighbors[eid] = {n.getID() for n in e.getIncoming().keys() if n.getID() in valid_edge_ids}
+    start_ids = {eid for eid, outs in out_neighbors.items() if outs}
+    end_ids = {eid for eid, ins in in_neighbors.items() if ins}
+    for _ in range(2, EDGE_CONNECTION_DEPTH + 1):
+        start_ids = {eid for eid, outs in out_neighbors.items() if any(n in start_ids for n in outs)}
+        end_ids = {eid for eid, ins in in_neighbors.items() if any(n in end_ids for n in ins)}
+    return start_ids, end_ids
+
+
 def run_match_sumo_edges_stage(state: PipelineState) -> None:
-    out_path = Path(state.scaled_trips_matched_path)
     if state.scaled_trips is None:
         state.scaled_trips = pd.read_csv(state.scaled_trips_path, sep=";", low_memory=False)
-
-    if out_path.exists():
-        matched = pd.read_csv(out_path, sep=";", low_memory=False)
-    else:
-        edges = _load_sumo_edges(state)
-        link_vectors = _build_link_vectors(state)
-        matched = _match_trips(
-            state.scaled_trips,
-            edges=edges,
-            max_radius_m=float(state.config["sumo_match_max_radius_m"]),
-            link_vectors=link_vectors,
-        )
+    edges = _load_sumo_edges(state)
+    link_vectors = _build_link_vectors(state)
+    valid_edge_ids = set(edges["edge_id"].astype(str))
+    start_edge_ids, end_edge_ids = _eligible_edge_ids(state, valid_edge_ids)
+    matched = _match_trips(
+        state.scaled_trips,
+        edges=edges,
+        max_radius_m=float(state.config["sumo_match_max_radius_m"]),
+        link_vectors=link_vectors,
+        start_edge_ids=start_edge_ids,
+        end_edge_ids=end_edge_ids,
+    )
 
     if "dep_time" in matched.columns:
         matched = matched.sort_values("dep_time").reset_index(drop=True)
     else:
         matched = matched.reset_index(drop=True)
     state.scaled_trips_matched = matched
-    CsvWriter.write_df(state.scaled_trips_matched, out_path)
+    CsvWriter.write_df(state.scaled_trips_matched, state.scaled_trips_matched_path)

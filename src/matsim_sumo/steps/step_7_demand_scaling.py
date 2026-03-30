@@ -158,15 +158,5 @@ def run_demand_scaling_stage(state: PipelineState) -> None:
         network_geo=state.network_geo,
         amenities=amenities,
     )
-
-    # Log some stats about how many links changed due to jittering, especially for clones
-    s = state.scaled_trips
-    start_changed = s["new_start_link"].astype("string").ne(s["start_link"].astype("string"))
-    end_changed = s["new_end_link"].astype("string").ne(s["end_link"].astype("string"))
-    any_changed = start_changed | end_changed
-    pct = lambda m: (100.0 * float(m.mean())) if len(m) else 0.0
-    print(
-        f"INFO Step 7 link changes: all(start={pct(start_changed):.2f}%, end={pct(end_changed):.2f}%, any={pct(any_changed):.2f}%) "
-    )
     CsvWriter.write_df(state.scaled_trips, state.scaled_trips_path)
     run_scaled_trips_plot_stage(state)

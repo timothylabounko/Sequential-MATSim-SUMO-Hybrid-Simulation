@@ -4,7 +4,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 from shapely import covers, points
-from scipy.spatial import KDTree
+from scipy.spatial import cKDTree
 
 
 class AmenitiesKDTree:
@@ -19,7 +19,7 @@ class AmenitiesKDTree:
             raise ValueError("Amenities table is empty after filtering valid x/y/weight.")
         self.xy = df[[x_col, y_col]].to_numpy(dtype=float)
         self.w = df[weight_col].to_numpy(dtype=float)
-        self.tree = KDTree(self.xy)
+        self.tree = cKDTree(self.xy)
 
     @classmethod
     def from_csv(
@@ -54,14 +54,28 @@ class AmenitiesKDTree:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         q = np.column_stack([x, y]).astype(float, copy=False)
         out = q.copy()
-        hit = np.zeros(len(q), dtype=bool)
-        for i, ids in enumerate(self.tree.query_ball_point(q, r=float(radius_m))):
-            if not ids:
+        n = len(q)
+        hit = np.zeros(n, dtype=bool)
+        if n == 0:
+            return out[:, 0], out[:, 1], hit
+
+        uq, inv = np.unique(q, axis=0, return_inverse=True)
+        cand_by_u = self.tree.query_ball_point(uq, r=float(radius_m))
+        order = np.argsort(inv, kind="mergesort")
+        inv_sorted = inv[order]
+        starts = np.r_[0, np.flatnonzero(np.diff(inv_sorted)) + 1]
+        ends = np.r_[starts[1:], len(order)]
+
+        for s, e in zip(starts, ends):
+            u = int(inv_sorted[s])
+            ids = cand_by_u[u]
+            if len(ids) == 0:
                 continue
+            rows = order[s:e]
             idx = np.asarray(ids, dtype=int)
             ww = self.w[idx]
             p = (ww / ww.sum()) if ww.sum() > 0 else None
-            pick = int(rng.choice(idx, p=p))
-            out[i] = self.xy[pick]
-            hit[i] = True
+            picks = np.asarray(rng.choice(idx, size=len(rows), p=p), dtype=int)
+            out[rows] = self.xy[picks]
+            hit[rows] = True
         return out[:, 0], out[:, 1], hit

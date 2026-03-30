@@ -15,12 +15,12 @@ modes_keep:
 keep_pass_through: true
 scale_factor: 10.0
 dep_time_jitter_seconds: 1800 # 30 minutes
-coord_jitter_radius_m: 300.0
-demand_scaling_seed: 42
+coord_jitter_radius_m: 500.0
+demand_scaling_seed: 40
 boundary_file: data/boundaries/sumo_boundary_transcality_weakly_connected.geojson
 
 # Output
-output_dir: results/run_09_with_amenity_jitter
+output_dir: results/run_13_connection_depth_4
 write_intermediates: false
 write_review_csv: true
 
