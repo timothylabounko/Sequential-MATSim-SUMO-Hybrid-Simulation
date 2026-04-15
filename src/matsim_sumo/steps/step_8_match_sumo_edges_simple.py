@@ -7,7 +7,7 @@ import pandas as pd
 from matsim_sumo.csv_writer import CsvWriter
 from matsim_sumo.pipeline_state import PipelineState
 
-EDGE_CONNECTION_DEPTH = 4
+SECOND_NEAREST_EXTRA_M = 50.0
 
 
 def _unit_vector_xy(x0: float, y0: float, x1: float, y1: float) -> tuple[float, float]:
@@ -44,7 +44,6 @@ def _nearest_edges(
     edges: gpd.GeoDataFrame,
     x_col: str,
     y_col: str,
-    max_radius_m: float,
     point_type: str,
     link_vectors: dict[str, tuple[float, float]],
 ) -> tuple[pd.Series, pd.Series]:
@@ -52,7 +51,7 @@ def _nearest_edges(
     valid = xy[x_col].notna() & xy[y_col].notna()
     edge = pd.Series(index=trips.index, dtype=object)
     dist = pd.Series(index=trips.index, dtype=float)
-    if not valid.any():
+    if not valid.any() or edges.empty:
         return edge, dist
 
     link_col = "new_start_link" if point_type == "start" else "new_end_link"
@@ -68,59 +67,68 @@ def _nearest_edges(
         geometry=gpd.points_from_xy(xy.loc[valid, x_col], xy.loc[valid, y_col]),
         crs=edges.crs,
     )
+    sidx = edges.sindex
+    nearest, nearest_dist = sidx.nearest(pts.geometry, return_all=False, return_distance=True)
+    if nearest.size == 0:
+        return edge, dist
 
-    # Stage A: absolute nearest edge (fallback).
-    nearest = gpd.sjoin_nearest(
-        pts,
-        edges[["edge_id", "edge_dx", "edge_dy", "geometry"]],
-        how="left",
-        max_distance=float(max_radius_m),
-        distance_col="dist_m",
+    n = len(pts)
+    p_idx = np.asarray(nearest[0], dtype=int)
+    e1_idx = np.full(n, -1, dtype=int)
+    d1 = np.full(n, np.nan, dtype=float)
+    e1_idx[p_idx] = np.asarray(nearest[1], dtype=int)
+    d1[p_idx] = np.asarray(nearest_dist, dtype=float)
+
+    e2_idx = np.full(n, -1, dtype=int)
+    d2 = np.full(n, np.nan, dtype=float)
+    pairs = sidx.query(
+        pts.geometry.iloc[p_idx],
+        predicate="dwithin",
+        distance=np.maximum(d1[p_idx] + SECOND_NEAREST_EXTRA_M, 1e-6),
     )
-    nearest = nearest.sort_values(["row_id", "dist_m"]).drop_duplicates("row_id", keep="first")
-    edge.loc[nearest["row_id"].to_numpy()] = nearest["edge_id"].to_numpy()
-    dist.loc[nearest["row_id"].to_numpy()] = nearest["dist_m"].to_numpy(dtype=float)
+    if pairs.size:
+        p2 = p_idx[np.asarray(pairs[0], dtype=int)]
+        e2 = np.asarray(pairs[1], dtype=int)
+        d = pts.geometry.iloc[p2].distance(edges.geometry.iloc[e2], align=False).to_numpy(dtype=float)
+        keep = e2 != e1_idx[p2]
+        if keep.any():
+            p2, e2, d = p2[keep], e2[keep], d[keep]
+            order = np.lexsort((d, p2))
+            p2, e2, d = p2[order], e2[order], d[order]
+            first = np.ones(p2.shape[0], dtype=bool)
+            first[1:] = p2[1:] != p2[:-1]
+            sel = p2[first]
+            e2_idx[sel] = e2[first]
+            d2[sel] = d[first]
 
-    # Stage B: only rows with wrong nearest direction; check next-nearest candidates (max 5).
-    dot0 = nearest["mvx"] * nearest["edge_dx"] + nearest["mvy"] * nearest["edge_dy"]
-    need_rows = nearest.loc[dot0.notna() & (dot0 < 0.985), "row_id"].to_numpy(dtype=int) # +- 10 degrees tolerance
-    if need_rows.size == 0:
-        return edge, dist
+    mvx = pts["mvx"].to_numpy(dtype=float)
+    mvy = pts["mvy"].to_numpy(dtype=float)
+    edge_dx = edges["edge_dx"].to_numpy(dtype=float)
+    edge_dy = edges["edge_dy"].to_numpy(dtype=float)
+    dot1 = np.full(n, np.nan, dtype=float)
+    dot2 = np.full(n, np.nan, dtype=float)
+    m1 = (e1_idx >= 0) & np.isfinite(mvx) & np.isfinite(mvy)
+    m2 = (e2_idx >= 0) & np.isfinite(mvx) & np.isfinite(mvy)
+    dot1[m1] = mvx[m1] * edge_dx[e1_idx[m1]] + mvy[m1] * edge_dy[e1_idx[m1]]
+    dot2[m2] = mvx[m2] * edge_dx[e2_idx[m2]] + mvy[m2] * edge_dy[e2_idx[m2]]
+    use2 = (e2_idx >= 0) & np.isfinite(dot2) & (~np.isfinite(dot1) | (dot2 > dot1))
 
-    need_pts = pts.set_index("row_id").loc[need_rows].reset_index()
-    pairs = edges.sindex.query(need_pts.geometry, predicate="dwithin", distance=float(max_radius_m))
-    if pairs.size == 0:
-        return edge, dist
+    pick_idx = e1_idx.copy()
+    pick_dist = d1.copy()
+    pick_idx[use2] = e2_idx[use2]
+    pick_dist[use2] = d2[use2]
 
-    q_idx = np.asarray(pairs[0], dtype=int)
-    e_idx = np.asarray(pairs[1], dtype=int)
-    cand = pd.DataFrame(
-        {
-            "row_id": need_pts["row_id"].to_numpy()[q_idx],
-            "mvx": need_pts["mvx"].to_numpy()[q_idx],
-            "mvy": need_pts["mvy"].to_numpy()[q_idx],
-            "edge_id": edges["edge_id"].to_numpy()[e_idx],
-            "edge_dx": edges["edge_dx"].to_numpy()[e_idx],
-            "edge_dy": edges["edge_dy"].to_numpy()[e_idx],
-        }
-    )
-    cand["dist_m"] = need_pts.geometry.iloc[q_idx].distance(edges.geometry.iloc[e_idx], align=False).to_numpy(dtype=float)
-    cand = cand.sort_values(["row_id", "dist_m"]).groupby("row_id", sort=False).head(5)
-    cand["dot"] = cand["mvx"] * cand["edge_dx"] + cand["mvy"] * cand["edge_dy"]
-    cand = cand[cand["dot"] >= 0.5]
-    if cand.empty:
-        return edge, dist
-
-    best = cand.sort_values(["row_id", "dist_m"]).drop_duplicates("row_id", keep="first")
-    edge.loc[best["row_id"].to_numpy()] = best["edge_id"].to_numpy()
-    dist.loc[best["row_id"].to_numpy()] = best["dist_m"].to_numpy(dtype=float)
+    row_ids = pts["row_id"].to_numpy(dtype=int)
+    ok = pick_idx >= 0
+    edge_ids = edges["edge_id"].to_numpy(dtype=object)
+    edge.loc[row_ids[ok]] = edge_ids[pick_idx[ok]]
+    dist.loc[row_ids[ok]] = pick_dist[ok]
     return edge, dist
 
 
 def _match_trips(
     trips: pd.DataFrame,
     edges: gpd.GeoDataFrame,
-    max_radius_m: float,
     link_vectors: dict[str, tuple[float, float]],
     start_edge_ids: set[str],
     end_edge_ids: set[str],
@@ -139,7 +147,6 @@ def _match_trips(
         start_edges,
         "start_x",
         "start_y",
-        max_radius_m,
         point_type="start",
         link_vectors=link_vectors,
     )
@@ -148,7 +155,6 @@ def _match_trips(
         end_edges,
         "end_x",
         "end_y",
-        max_radius_m,
         point_type="end",
         link_vectors=link_vectors,
     )
@@ -179,11 +185,17 @@ def _eligible_edge_ids(state: PipelineState, valid_edge_ids: set[str]) -> tuple[
             continue
         out_neighbors[eid] = {n.getID() for n in e.getOutgoing().keys() if n.getID() in valid_edge_ids}
         in_neighbors[eid] = {n.getID() for n in e.getIncoming().keys() if n.getID() in valid_edge_ids}
-    start_ids = {eid for eid, outs in out_neighbors.items() if outs}
-    end_ids = {eid for eid, ins in in_neighbors.items() if ins}
-    for _ in range(2, EDGE_CONNECTION_DEPTH + 1):
-        start_ids = {eid for eid, outs in out_neighbors.items() if any(n in start_ids for n in outs)}
-        end_ids = {eid for eid, ins in in_neighbors.items() if any(n in end_ids for n in ins)}
+
+    def _fixed_point(neighbors: dict[str, set[str]]) -> set[str]:
+        keep = set(neighbors)
+        while True:
+            nxt = {eid for eid in keep if any(n in keep for n in neighbors[eid])}
+            if len(nxt) == len(keep):
+                return nxt
+            keep = nxt
+
+    start_ids = _fixed_point(out_neighbors)
+    end_ids = _fixed_point(in_neighbors)
     return start_ids, end_ids
 
 
@@ -197,7 +209,6 @@ def run_match_sumo_edges_stage(state: PipelineState) -> None:
     matched = _match_trips(
         state.scaled_trips,
         edges=edges,
-        max_radius_m=float(state.config["sumo_match_max_radius_m"]),
         link_vectors=link_vectors,
         start_edge_ids=start_edge_ids,
         end_edge_ids=end_edge_ids,

@@ -38,7 +38,6 @@ REQUIRED_CONFIG_KEYS = {
     "sumo_network_path",
     "sumo_network_lv95_tmp_file",
     "match_sumo_edges_script",
-    "sumo_match_max_radius_m",
     "sumo_vclass_map",
     "duarouter_bin",
     "sumo_routes_file",

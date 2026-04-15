@@ -4,7 +4,7 @@ from xml.etree import ElementTree as ET
 
 from matsim_sumo.pipeline_state import PipelineState
 
-SAMPLE_FRACTION = 0.05
+SAMPLE_FRACTION = 1
 
 
 def _local_name(tag: str) -> str:

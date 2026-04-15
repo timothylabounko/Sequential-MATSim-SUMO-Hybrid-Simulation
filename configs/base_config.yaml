@@ -1,5 +1,5 @@
 # MATSim Input
-matsim_output_dir: data/matsim_output
+matsim_output_dir: data/matsim_output_2
 plans_file: output_plans.xml.gz
 experienced_plans_file: output_experienced_plans.xml.gz
 trips_file: output_trips.csv.gz
@@ -16,13 +16,13 @@ keep_pass_through: true
 scale_factor: 10.0
 dep_time_jitter_seconds: 1800 # 30 minutes
 coord_jitter_radius_m: 500.0
-demand_scaling_seed: 40
-boundary_file: data/boundaries/sumo_boundary_transcality_weakly_connected.geojson
+demand_scaling_seed: 32
+boundary_file: data/boundaries/sumo_boundary_transcality.geojson
 
 # Output
-output_dir: results/run_13_connection_depth_4
+output_dir: results/run_19_MATSim_Scenario_2
 write_intermediates: false
-write_review_csv: true
+write_review_csv: false
 
 # Step 7 amenity-based coordinate jitter
 amenity_kdtree_enabled: true
@@ -35,7 +35,7 @@ amenities_weight_col: weight
 # Step 8 SUMO edge matching
 match_sumo_edges_script: scripts/match_scaled_trips_sumo_edges_macOS.sh
 sumo_network_path: data/sumo_scenario/Zurich_Scenario_Transcality/VMOD.net.xml
-sumo_network_lv95_tmp_file: data/tmp/0_sumo_network_lv95.geojson
+sumo_network_lv95_tmp_file: data/tmp/0_sumo_osm_network_lv95.geojson
 sumo_match_vehicle_col: mode
 sumo_match_max_radius_m: 300.0
 sumo_match_assume_xy: false
@@ -45,7 +45,7 @@ sumo_vclass_map:
   truck: truck
 
 # Step 10 duarouter
-duarouter_bin: duarouter
+duarouter_bin: /Users/Matteo/Documents/0_ETH/0_Master_Thesis/2_SUMO_Simulation/sumo-env/bin/duarouter
 sumo_routes_file: 10_sumo_routes.rou.xml
 sumo_unrouted_trips_file: 10_unrouted_trips.xml
 duarouter_log_file: 10_duarouter.log
