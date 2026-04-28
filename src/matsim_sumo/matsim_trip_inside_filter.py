@@ -49,7 +49,6 @@ def build_pipeline_state(config: dict) -> PipelineState:
         scaled_trips_path=output_dir / config.get("scaled_trips_file", "7_scaled_trips.csv.gz"),
         sumo_network_path=Path(config["sumo_network_path"]),
         sumo_network_lv95_path=Path(config["sumo_network_lv95_tmp_file"]),
-        match_sumo_edges_script_path=Path(config["match_sumo_edges_script"]),
         scaled_trips_matched_path=output_dir
         / config.get("scaled_trips_matched_file", "8_scaled_trips_matched.csv.gz"),
         sumo_trips_path=output_dir / config.get("sumo_trips_file", "9_sumo_trips.xml"),

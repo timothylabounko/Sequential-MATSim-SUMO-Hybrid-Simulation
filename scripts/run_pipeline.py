@@ -37,7 +37,6 @@ REQUIRED_CONFIG_KEYS = {
     "amenities_weight_col",
     "sumo_network_path",
     "sumo_network_lv95_tmp_file",
-    "match_sumo_edges_script",
     "sumo_vclass_map",
     "duarouter_bin",
     "sumo_routes_file",
@@ -60,6 +59,13 @@ def validate_config(config):
 def create_output_dir(output_dir):
     os.makedirs(output_dir, exist_ok=True)
     print(f"✔ Output directory ready: {output_dir}")
+
+
+def write_config_copy(config: dict, output_dir: Path) -> Path:
+    path = Path(output_dir) / "pipeline_config.yaml"
+    with open(path, "w") as f:
+        yaml.safe_dump(config, f, sort_keys=False)
+    return path
 
 
 # Writes a plain CSV review copy from a CSV.GZ pipeline output
@@ -102,6 +108,8 @@ def main():
     print(f"✔ Loaded config: {args.config}")
 
     create_output_dir(state.output_dir)
+    config_copy = write_config_copy(config, state.output_dir)
+    print(f"✔ Wrote config copy: {config_copy}")
 
     stats = run_pipeline_steps(state)
     print(f"✔ Wrote {stats['cut_links']} cut links to {state.cut_links_csv_path}")

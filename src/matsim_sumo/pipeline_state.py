@@ -30,13 +30,13 @@ class PipelineState:
     scaled_trips_path: Path
     sumo_network_path: Path
     sumo_network_lv95_path: Path
-    match_sumo_edges_script_path: Path
     scaled_trips_matched_path: Path
     sumo_trips_path: Path
     sumo_routes_path: Path
     sumo_unrouted_trips_path: Path
     duarouter_log_path: Path
 
+    match_sumo_edges_script_path: Optional[Path] = None
     boundary: Any = None
     network: Any = None
     network_geo: Any = None

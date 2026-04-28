@@ -1,26 +1,22 @@
 # MATSim Input
-matsim_output_dir: data/matsim_output_2
+matsim_output_dir: data/DMC_Parameter_Urban_2/calibrated_mode_parameters_1
 plans_file: output_plans.xml.gz
-experienced_plans_file: output_experienced_plans.xml.gz
 trips_file: output_trips.csv.gz
-legs_file: output_legs.csv.gz
 events_file: output_events.xml.gz
 network_file: output_network.xml.gz
-links_file: output_links.csv.gz
 
 # Filtering Settings
 modes_keep:
   - car
   - truck
-keep_pass_through: true
 scale_factor: 10.0
-dep_time_jitter_seconds: 1800 # 30 minutes
+dep_time_jitter_seconds: 3600 # 60 minutes
 coord_jitter_radius_m: 500.0
-demand_scaling_seed: 32
+demand_scaling_seed: 31
 boundary_file: data/boundaries/sumo_boundary_transcality.geojson
 
 # Output
-output_dir: results/run_19_MATSim_Scenario_2
+output_dir: results/run_20_MATSim_Scenario_2_urbancore_-2
 write_intermediates: false
 write_review_csv: false
 
@@ -33,13 +29,8 @@ amenities_y_col: y
 amenities_weight_col: weight
 
 # Step 8 SUMO edge matching
-match_sumo_edges_script: scripts/match_scaled_trips_sumo_edges_macOS.sh
 sumo_network_path: data/sumo_scenario/Zurich_Scenario_Transcality/VMOD.net.xml
 sumo_network_lv95_tmp_file: data/tmp/0_sumo_osm_network_lv95.geojson
-sumo_match_vehicle_col: mode
-sumo_match_max_radius_m: 300.0
-sumo_match_assume_xy: false
-sumo_match_same_dist_rel: 0.05
 sumo_vclass_map:
   car: passenger
   truck: truck

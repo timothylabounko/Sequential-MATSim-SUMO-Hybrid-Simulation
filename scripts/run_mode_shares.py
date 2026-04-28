@@ -18,27 +18,17 @@ import matplotlib.pyplot as plt
 
 MAIN_MODES_RAW = [
     "car",
-    "car_loop",
     "car_passenger",
-    "car_passenger_loop",
     "pt",
-    "pt_loop",
     "walk",
-    "walk_loop",
-    "bike",
-    "bike_loop",
+    "bike"
 ]
 MODE_MAP = {
     "car": "car",
-    "car_loop": "car",
     "car_passenger": "car_passenger",
-    "car_passenger_loop": "car_passenger",
     "pt": "pt",
-    "pt_loop": "pt",
     "walk": "walk",
-    "walk_loop": "walk",
-    "bike": "bike",
-    "bike_loop": "bike",
+    "bike": "bike"
 }
 MAIN_MODES_COMPARISON = ["car", "car_passenger", "pt", "walk", "bike"]
 
@@ -144,8 +134,8 @@ def main() -> None:
     out_dir = matsim_dir / f"mode_shares_{datetime.now():%Y%m%d_%H%M%S}"
     out_dir.mkdir(parents=True, exist_ok=False)
 
-    zurich_boundary = gpd.read_file(repo_root / "data/boundaries/zurich_boundary.geojson")
-    zurich_region_cutter = gpd.read_file(repo_root / "data/boundaries/zurich_region_cutter_epsg2056.json")
+    zurich_city = gpd.read_file(repo_root / "data/boundaries/zurich_boundary.geojson")
+    zurich_region = gpd.read_file(repo_root / "data/boundaries/zurich_region_cutter_epsg2056.json")
     mz_households = pd.read_pickle(repo_root / "data/MZ/data.microcensus.households__184cb99cc4380ea2dfc836a6cb1b6f9b.p")
     mz_persons = pd.read_pickle(repo_root / "data/MZ/data.microcensus.persons__184cb99cc4380ea2dfc836a6cb1b6f9b.p")
     mz_trips = pd.read_pickle(repo_root / "data/MZ/data.microcensus.trips__dea3ee4144d5b4ad94b57e124312a765.p")[0]
@@ -178,12 +168,13 @@ def main() -> None:
     mz_weights = mz_persons[["person_id", "person_weight"]].copy()
     mz_weights["person_id"] = mz_weights["person_id"].astype(str)
 
-    zurich_geom = zurich_boundary.union_all()
-    region_geom = zurich_region_cutter.union_all()
+    city_geom = zurich_city.union_all()
+    region_geom = zurich_region.union_all()
 
     mz_home = mz_households[["person_id", "home_x", "home_y"]].dropna().drop_duplicates("person_id").copy()
     mz_home["person_id"] = mz_home["person_id"].astype(str)
-    mz_city_ids = set(mz_home.loc[within_mask(mz_home, "home_x", "home_y", zurich_geom), "person_id"])
+    mz_city_ids = set(mz_home.loc[within_mask(mz_home, "home_x", "home_y", city_geom), "person_id"])
+    mz_region_ids = set(mz_home.loc[within_mask(mz_home, "home_x", "home_y", region_geom), "person_id"])
     mz_living = weighted_share(
         mz_trips.loc[mz_trips["person_id"].isin(mz_city_ids)].merge(mz_weights, on="person_id", how="left"),
         "mode",
@@ -192,7 +183,8 @@ def main() -> None:
     )
 
     matsim_home = matsim_persons_valid[["person", "home_x", "home_y"]].dropna(subset=["home_x", "home_y"]).copy()
-    matsim_city_ids = set(matsim_home.loc[within_mask(matsim_home, "home_x", "home_y", zurich_geom), "person"])
+    matsim_city_ids = set(matsim_home.loc[within_mask(matsim_home, "home_x", "home_y", city_geom), "person"])
+    matsim_region_ids = set(matsim_home.loc[within_mask(matsim_home, "home_x", "home_y", region_geom), "person"])
     matsim_living = unweighted_share(
         matsim_trips.loc[matsim_trips["person"].isin(matsim_city_ids)],
         "main_mode",
@@ -200,22 +192,19 @@ def main() -> None:
     )
     comp_living = compare(mz_living, "MZ_share_%", matsim_living, "MATSim_share_%")
 
-    mz_enter = mz_trips.loc[within_mask(mz_trips, "destination_x", "destination_y", zurich_geom)].merge(
+    mz_enter = mz_trips.loc[within_mask(mz_trips, "destination_x", "destination_y", city_geom)].merge(
         mz_weights, on="person_id", how="left"
     )
     mz_enter_share = weighted_share(mz_enter, "mode", "person_weight", "MZ_enter_share_%")
     matsim_enter = matsim_trips.loc[matsim_trips["person"].isin(matsim_valid_person_ids)]
-    matsim_enter = matsim_enter.loc[within_mask(matsim_enter, "end_x", "end_y", zurich_geom)]
+    matsim_enter = matsim_enter.loc[within_mask(matsim_enter, "end_x", "end_y", city_geom)]
     matsim_enter_share = unweighted_share(matsim_enter, "main_mode", "MATSim_enter_share_%")
     comp_enter = compare(mz_enter_share, "MZ_enter_share_%", matsim_enter_share, "MATSim_enter_share_%")
 
-    mz_touch_region = within_mask(mz_trips, "origin_x", "origin_y", region_geom) | within_mask(
-        mz_trips, "destination_x", "destination_y", region_geom
-    )
-    mz_overall = mz_trips.loc[mz_touch_region].merge(mz_weights, on="person_id", how="left")
+    mz_overall = mz_trips.loc[mz_trips["person_id"].isin(mz_region_ids)].merge(mz_weights, on="person_id", how="left")
     mz_overall["person_weight"] = mz_overall["person_weight"].fillna(0.0)
     mz_overall_share = weighted_share(mz_overall, "mode", "person_weight", "MZ_overall_share_%")
-    matsim_overall = matsim_trips.loc[matsim_trips["person"].isin(matsim_valid_person_ids)]
+    matsim_overall = matsim_trips.loc[matsim_trips["person"].isin(matsim_region_ids)]
     matsim_overall_share = unweighted_share(matsim_overall, "main_mode", "MATSim_overall_share_%")
     comp_overall = compare(mz_overall_share, "MZ_overall_share_%", matsim_overall_share, "MATSim_overall_share_%")
 
@@ -227,21 +216,21 @@ def main() -> None:
         comp_living,
         "MZ_share_%",
         "MATSim_share_%",
-        "Mode Share Comparison - Persons Living in Zurich",
+        "Mode Share Comparison - Persons Living in City of Zurich",
         out_dir / "comparison_living.png",
     )
     plot_modeshare_comparison(
         comp_enter,
         "MZ_enter_share_%",
         "MATSim_enter_share_%",
-        "Mode Share Comparison - Trips Entering Zurich",
+        "Mode Share Comparison - Trips Entering City of Zurich",
         out_dir / "comparison_entering.png",
     )
     plot_modeshare_comparison(
         comp_overall,
         "MZ_overall_share_%",
         "MATSim_overall_share_%",
-        "Mode Share Comparison - Overall (MZ trips touching Zurich region)",
+        "Mode Share Comparison - Persons Living in Zurich Region",
         out_dir / "comparison_overall.png",
     )
 
