@@ -1,42 +1,42 @@
 # MATSim Input
-matsim_output_dir: data/DMC_Parameter_Urban_2/calibrated_mode_parameters_1
+matsim_output_dir: data/matsim_output_3
 plans_file: output_plans.xml.gz
 trips_file: output_trips.csv.gz
 events_file: output_events.xml.gz
 network_file: output_network.xml.gz
 
-# Filtering Settings
+# SUMO Input
+sumo_input_dir: data/sumo_scenario/Zurich_Scenario_Transcality
+sumo_network_path: VMOD.net.xml
+
+# Step 1: Demand Filtering Settings
 modes_keep:
   - car
-  - truck
+  # - truck
+boundary_file: data/boundaries/sumo_boundary_transcality.geojson
+
+# Step 2: Demand Scaling Settings
 scale_factor: 10.0
 dep_time_jitter_seconds: 3600 # 60 minutes
 coord_jitter_radius_m: 500.0
 demand_scaling_seed: 31
-boundary_file: data/boundaries/sumo_boundary_transcality.geojson
-
-# Output
-output_dir: results/run_20_MATSim_Scenario_2_urbancore_-2
-write_intermediates: false
-write_review_csv: false
-
-# Step 7 amenity-based coordinate jitter
 amenity_kdtree_enabled: true
 amenities_path: data/Amenities_Location/locations.csv
-amenities_sep: ","
-amenities_x_col: x
-amenities_y_col: y
-amenities_weight_col: weight
 
-# Step 8 SUMO edge matching
-sumo_network_path: data/sumo_scenario/Zurich_Scenario_Transcality/VMOD.net.xml
-sumo_network_lv95_tmp_file: data/tmp/0_sumo_osm_network_lv95.geojson
+# Step 3: Map Matching Settings
+sumo_network_lv95_tmp_file: data/tmp/0_sumo_network_lv95.geojson
 sumo_vclass_map:
   car: passenger
-  truck: truck
+  # truck: truck
 
-# Step 10 duarouter
+# Step 4: SUMO Files Writing Settings
+run_duarouter: false
 duarouter_bin: /Users/Matteo/Documents/0_ETH/0_Master_Thesis/2_SUMO_Simulation/sumo-env/bin/duarouter
 sumo_routes_file: 10_sumo_routes.rou.xml
 sumo_unrouted_trips_file: 10_unrouted_trips.xml
 duarouter_log_file: 10_duarouter.log
+
+# Output
+output_dir: results/run_21_MATSim_Scenario_3_no_trucks
+write_intermediates: false
+write_review_csv: false

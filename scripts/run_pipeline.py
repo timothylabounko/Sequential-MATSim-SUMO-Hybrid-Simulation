@@ -31,13 +31,11 @@ REQUIRED_CONFIG_KEYS = {
     "demand_scaling_seed",
     "amenity_kdtree_enabled",
     "amenities_path",
-    "amenities_sep",
-    "amenities_x_col",
-    "amenities_y_col",
-    "amenities_weight_col",
+    "sumo_input_dir",
     "sumo_network_path",
     "sumo_network_lv95_tmp_file",
     "sumo_vclass_map",
+    "run_duarouter",
     "duarouter_bin",
     "sumo_routes_file",
     "sumo_unrouted_trips_file",
@@ -126,12 +124,15 @@ def main():
         f"({stats['scaled_trips_match_ok']} match_ok) to {state.scaled_trips_matched_path}"
     )
     print(f"✔ Wrote {stats['sumo_trips_xml_rows']} SUMO trips XML rows to {state.sumo_trips_path}")
-    print(f"✔ Wrote {stats['sumo_routes_rows']} routed trips ({stats['sumo_routes_pct']:.2f}%) to {state.sumo_routes_path}")
-    print(
-        f"✔ Wrote {stats['sumo_unrouted_rows']} unrouted trips "
-        f"({stats['sumo_unrouted_pct']:.2f}%) to {state.sumo_unrouted_trips_path}"
-    )
-    print(f"✔ Wrote duarouter log to {state.duarouter_log_path}")
+    if stats["duarouter_ran"]:
+        print(f"✔ Wrote {stats['sumo_routes_rows']} routed trips ({stats['sumo_routes_pct']:.2f}%) to {state.sumo_routes_path}")
+        print(
+            f"✔ Wrote {stats['sumo_unrouted_rows']} unrouted trips "
+            f"({stats['sumo_unrouted_pct']:.2f}%) to {state.sumo_unrouted_trips_path}"
+        )
+        print(f"✔ Wrote duarouter log to {state.duarouter_log_path}")
+    else:
+        print("✔ Skipped duarouter routing (run_duarouter: false)")
 
     if config["write_review_csv"]:
         timed_review = write_review_csv(state.crossing_segments_timed_path)

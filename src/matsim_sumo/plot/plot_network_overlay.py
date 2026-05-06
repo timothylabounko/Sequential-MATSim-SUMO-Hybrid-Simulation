@@ -24,7 +24,12 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from matsim_sumo.matsim_trip_inside_filter import resolve_sumo_network_path
 from matsim_sumo.network_preprocessing.network_preprocessing import preprocess_sumo_network_to_lv95
+
+
+def _project_path(path: Path, root: Path) -> Path:
+    return path if path.is_absolute() else root / path
 
 
 def _normalize_link_ids(s: pd.Series) -> pd.Series:
@@ -65,7 +70,7 @@ def _load_sumo_geo(cfg: dict, root: Path, matsim_crs: str) -> gpd.GeoDataFrame:
     else:
         vclasses = tuple(dict.fromkeys(cfg["sumo_vclass_map"].values()))
         _, sumo_geo = preprocess_sumo_network_to_lv95(
-            network_path=root / cfg["sumo_network_path"],
+            network_path=_project_path(resolve_sumo_network_path(cfg), root),
             vclasses=vclasses,
             out_path=sumo_geo_path,
         )

@@ -10,6 +10,11 @@ from matsim_sumo.csv_writer import CsvWriter
 from matsim_sumo.pipeline_state import PipelineState
 from matsim_sumo.plot.scaled_trips_start_end_plots import run_scaled_trips_plot_stage
 
+AMENITIES_CSV_SEP = ","
+AMENITIES_X_COL = "x"
+AMENITIES_Y_COL = "y"
+AMENITIES_WEIGHT_COL = "weight"
+
 
 def _jitter_dep_time(dep_time: pd.Series, jitter_s: int, rng) -> pd.Series:
     parts = dep_time.astype(str).str.split(":", n=2, expand=True)
@@ -142,10 +147,10 @@ def run_demand_scaling_stage(state: PipelineState) -> None:
             raise FileNotFoundError(f"Amenities CSV not found: {path}")
         amenities = AmenitiesKDTree.from_csv(
             path,
-            sep=str(state.config["amenities_sep"]),
-            x_col=str(state.config["amenities_x_col"]),
-            y_col=str(state.config["amenities_y_col"]),
-            weight_col=str(state.config["amenities_weight_col"]),
+            sep=AMENITIES_CSV_SEP,
+            x_col=AMENITIES_X_COL,
+            y_col=AMENITIES_Y_COL,
+            weight_col=AMENITIES_WEIGHT_COL,
             boundary_path=state.boundary_path,
         )
     state.scaled_trips = scale_demand(

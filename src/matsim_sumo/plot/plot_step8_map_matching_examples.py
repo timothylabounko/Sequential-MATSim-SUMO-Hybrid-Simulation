@@ -19,7 +19,12 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from matsim_sumo.matsim_trip_inside_filter import resolve_sumo_network_path
 from matsim_sumo.network_preprocessing.network_preprocessing import preprocess_sumo_network_to_lv95
+
+
+def _project_path(path: Path) -> Path:
+    return path if path.is_absolute() else PROJECT_ROOT / path
 
 
 def _fixed_point(neighbors: dict[str, set[str]]) -> set[str]:
@@ -84,7 +89,7 @@ def _load_sumo_geo(cfg: dict) -> gpd.GeoDataFrame:
     geo_path = PROJECT_ROOT / cfg["sumo_network_lv95_tmp_file"]
     if not geo_path.exists():
         preprocess_sumo_network_to_lv95(
-            network_path=PROJECT_ROOT / cfg["sumo_network_path"],
+            network_path=_project_path(resolve_sumo_network_path(cfg)),
             vclasses=tuple(dict.fromkeys(cfg["sumo_vclass_map"].values())),
             out_path=geo_path,
         )
@@ -101,7 +106,7 @@ def plot_map_matching_examples(cfg: dict, out_dir: Path, n: int = 3, seed: int =
     if str(boundary.crs) != str(sumo_geo.crs):
         boundary = boundary.to_crs(sumo_geo.crs)
 
-    net = sumolib.net.readNet(str(PROJECT_ROOT / cfg["sumo_network_path"]), withInternal=False)
+    net = sumolib.net.readNet(str(_project_path(resolve_sumo_network_path(cfg))), withInternal=False)
     start_ids, end_ids = _eligible_edge_sets(net, set(sumo_geo["edge_id"]))
     start_edges = sumo_geo[sumo_geo["edge_id"].isin(start_ids)].copy()
     end_edges = sumo_geo[sumo_geo["edge_id"].isin(end_ids)].copy()

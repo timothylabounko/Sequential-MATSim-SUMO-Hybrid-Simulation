@@ -16,6 +16,13 @@ from matsim_sumo.steps.step_9_write_sumo_trips_xml import run_write_sumo_trips_x
 from matsim_sumo.steps.step_10_duarouter import run_duarouter_stage
 
 
+def resolve_sumo_network_path(config: dict) -> Path:
+    path = Path(config["sumo_network_path"])
+    if path.is_absolute():
+        return path
+    return Path(config.get("sumo_input_dir", "")) / path
+
+
 def build_pipeline_state(config: dict) -> PipelineState:
     matsim_output_dir = Path(config["matsim_output_dir"])
     output_dir = Path(config["output_dir"])
@@ -47,7 +54,7 @@ def build_pipeline_state(config: dict) -> PipelineState:
         trips_inside_path=output_dir / config.get("inside_trips_file", "5_trips_inside.csv.gz"),
         combined_trips_path=output_dir / config.get("combined_trips_file", "6_combined_trips.csv.gz"),
         scaled_trips_path=output_dir / config.get("scaled_trips_file", "7_scaled_trips.csv.gz"),
-        sumo_network_path=Path(config["sumo_network_path"]),
+        sumo_network_path=resolve_sumo_network_path(config),
         sumo_network_lv95_path=Path(config["sumo_network_lv95_tmp_file"]),
         scaled_trips_matched_path=output_dir
         / config.get("scaled_trips_matched_file", "8_scaled_trips_matched.csv.gz"),
@@ -96,7 +103,11 @@ def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
     _run_step("Step 7 demand scaling", lambda: run_demand_scaling_stage(state))
     _run_step("Step 8 match SUMO edges", lambda: run_match_sumo_edges_stage(state))
     _run_step("Step 9 write SUMO trips XML", lambda: run_write_sumo_trips_xml_stage(state))
-    _run_step("Step 10 duarouter routing", lambda: run_duarouter_stage(state))
+    duarouter_ran = bool(state.config["run_duarouter"])
+    if duarouter_ran:
+        _run_step("Step 10 duarouter routing", lambda: run_duarouter_stage(state))
+    else:
+        print("✔ Step 10 duarouter routing skipped (run_duarouter: false)")
 
     return {
         "cut_links": len(state.cut_link_ids),
@@ -111,6 +122,7 @@ def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
         "scaled_trips_matched": len(state.scaled_trips_matched),
         "scaled_trips_match_ok": int(state.scaled_trips_matched["match_ok"].sum()),
         "sumo_trips_xml_rows": int(state.sumo_trips_count or 0),
+        "duarouter_ran": duarouter_ran,
         "sumo_routes_rows": int(state.sumo_routes_count or 0),
         "sumo_routes_pct": float(state.sumo_routes_pct or 0.0),
         "sumo_unrouted_rows": int(state.sumo_unrouted_count or 0),
