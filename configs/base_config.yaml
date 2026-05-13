@@ -1,5 +1,7 @@
 # MATSim Input
-matsim_output_dir: data/matsim_output_3
+matsim_output_dir: data/matsim_output_50pct
+matsim_config_file: data/matsim_output_3/router_config.xml
+matsim_router_java_xmx: 16g
 plans_file: output_plans.xml.gz
 trips_file: output_trips.csv.gz
 events_file: output_events.xml.gz
@@ -12,14 +14,14 @@ sumo_network_path: VMOD.net.xml
 # Step 1: Demand Filtering Settings
 modes_keep:
   - car
-  # - truck
+  - truck
 boundary_file: data/boundaries/sumo_boundary_transcality.geojson
 
 # Step 2: Demand Scaling Settings
-scale_factor: 10.0
+scale_factor: 2.0
 dep_time_jitter_seconds: 3600 # 60 minutes
 coord_jitter_radius_m: 500.0
-demand_scaling_seed: 31
+demand_scaling_seed: 35
 amenity_kdtree_enabled: true
 amenities_path: data/Amenities_Location/locations.csv
 
@@ -27,16 +29,34 @@ amenities_path: data/Amenities_Location/locations.csv
 sumo_network_lv95_tmp_file: data/tmp/0_sumo_network_lv95.geojson
 sumo_vclass_map:
   car: passenger
-  # truck: truck
+  truck: truck
+sumo_match_road_type_enabled: true
+sumo_match_same_type_max_radius_m: 1000.0
+sumo_match_fallback_enabled: true
+sumo_match_route_sequence_enabled: true
+sumo_match_route_sequence_max_radius_m: 1000.0
+sumo_match_route_sequence_min_dot: 0.3
 
 # Step 4: SUMO Files Writing Settings
-run_duarouter: false
+run_duarouter: true
 duarouter_bin: /Users/Matteo/Documents/0_ETH/0_Master_Thesis/2_SUMO_Simulation/sumo-env/bin/duarouter
 sumo_routes_file: 10_sumo_routes.rou.xml
 sumo_unrouted_trips_file: 10_unrouted_trips.xml
 duarouter_log_file: 10_duarouter.log
 
 # Output
-output_dir: results/run_21_MATSim_Scenario_3_no_trucks
+output_dir: results/run_22_50pct
 write_intermediates: false
 write_review_csv: false
+
+# TomTom travel-time sampling
+data_path: data
+tomtom_api_key: hfEzOLhg9jU4FTtMDcTRQsCg7OfU4L91
+tomtom_trips_path: results/run_22_50pct/6_combined_trips.csv.gz
+tomtom_sample_size: 1500
+tomtom_sample_seed: 31
+num_tomtom_requests: 1500
+min_trip_distance_km: 3
+sumo_output_dir: /Users/Matteo/Documents/0_ETH/0_Master_Thesis/2_SUMO_Simulation/sumo-env/scenarios/sumo_scenario_euler/output_meso_scenario_3/scale_1.0_100pct
+travel_time_output_dir: results/run_22_50pct
+travel_time_trips_file: 6_combined_trips.csv.gz

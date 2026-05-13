@@ -1,6 +1,7 @@
 lxml
 pandas
 geopandas
+pyogrio
 pyyaml
 tqdm
 shapely

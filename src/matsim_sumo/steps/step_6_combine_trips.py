@@ -17,6 +17,7 @@ BASE_COLS = [
     "end_x",
     "end_y",
     "crossing_type",
+    "route_links",
 ]
 TARGET_COLS = ["person_id", "trip_id", "new_trip_id", *BASE_COLS[2:]]
 
@@ -30,7 +31,7 @@ def combine_trips(cross: pd.DataFrame, inside: pd.DataFrame, seed: int) -> pd.Da
     cross_combined = cross.assign(trip_id=pd.NA)[BASE_COLS]
     inside_combined = (
         inside.rename(columns={"person": "person_id", "main_mode": "mode"})
-        .assign(crossing_type="inside")[BASE_COLS]
+        .assign(crossing_type="inside", route_links=pd.NA)[BASE_COLS]
     )
     out = pd.concat([cross_combined, inside_combined], ignore_index=True)
     out["new_trip_id"] = _build_new_trip_ids(len(out), seed)
