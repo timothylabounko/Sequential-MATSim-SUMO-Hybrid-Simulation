@@ -83,10 +83,24 @@ def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
         )
 
     _run_step("Step 0 SUMO network preprocessing", _run_sumo_network_preprocessing)
-    if not state.boundary_path.exists():
+
+    def _run_sumo_boundary() -> None:
+        if state.boundary_path.exists() and bool(state.config.get("boundary_force_rebuild", False)):
+            state.boundary_path.unlink()
+        compute_and_save_sumo_boundary(
+            state.sumo_network_geo,
+            state.boundary_path,
+            network_buffer_m=float(state.config.get("sumo_boundary_network_buffer_m", 35.0)),
+            gap_close_m=float(state.config.get("sumo_boundary_gap_close_m", 150.0)),
+            inward_buffer_m=float(state.config.get("sumo_boundary_inward_buffer_m", 50.0)),
+            simplify_m=float(state.config.get("sumo_boundary_simplify_m", 40.0)),
+            outward_buffer_m=float(state.config.get("sumo_boundary_outward_buffer_m", 100.0)),
+        )
+
+    if bool(state.config.get("boundary_force_rebuild", False)) or not state.boundary_path.exists():
         _run_step(
             "Step 0 SUMO boundary",
-            lambda: compute_and_save_sumo_boundary(state.sumo_network_geo, state.boundary_path),
+            _run_sumo_boundary,
         )
     else:
         print(f"✔ Step 0 SUMO boundary skipped (exists): {state.boundary_path}")
@@ -121,6 +135,7 @@ def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
         "scaled_trips": len(state.scaled_trips),
         "scaled_trips_matched": len(state.scaled_trips_matched),
         "scaled_trips_match_ok": int(state.scaled_trips_matched["match_ok"].sum()),
+        "scaled_trips_guardrail_dropped": int(state.sumo_endpoint_guardrail_dropped_count or 0),
         "sumo_trips_xml_rows": int(state.sumo_trips_count or 0),
         "duarouter_ran": duarouter_ran,
         "sumo_routes_rows": int(state.sumo_routes_count or 0),
