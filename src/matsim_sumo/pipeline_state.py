@@ -56,6 +56,9 @@ class PipelineState:
     combined_trips: Optional[pd.DataFrame] = None
     scaled_trips: Optional[pd.DataFrame] = None
     scaled_trips_matched: Optional[pd.DataFrame] = None
+    sumo_endpoint_guardrail_dropped_count: Optional[int] = None
+    sumo_endpoint_guardrail_dropped_by_type: Optional[dict[str, int]] = None
+    sumo_endpoint_distance_diagnostics: Optional[dict[str, dict[str, float | int]]] = None
     sumo_trips_input_count: Optional[int] = None
     sumo_trips_count: Optional[int] = None
     sumo_routes_input_count: Optional[int] = None

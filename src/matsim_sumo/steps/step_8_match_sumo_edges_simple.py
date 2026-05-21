@@ -12,6 +12,12 @@ from matsim_sumo.csv_writer import CsvWriter
 from matsim_sumo.pipeline_state import PipelineState
 
 SECOND_NEAREST_EXTRA_M = 50.0
+DISTANCE_DIAGNOSTIC_THRESHOLDS_M = (50.0, 100.0, 150.0, 250.0)
+
+
+def _config_float(config: dict, key: str, default: float | None) -> float | None:
+    value = config.get(key, default)
+    return None if value is None else float(value)
 
 
 def _local_name(tag: str) -> str:
@@ -287,6 +293,7 @@ def _nearest_edges_type_aware(
     same_type_max_radius_m: float,
     fallback_enabled: bool,
     road_type_enabled: bool,
+    fallback_max_radius_m: float | None,
 ) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series, pd.Series]:
     edge = pd.Series(index=trips.index, dtype=object)
     dist = pd.Series(index=trips.index, dtype=float)
@@ -334,6 +341,7 @@ def _nearest_edges_type_aware(
                 y_col,
                 point_type,
                 link_vectors,
+                max_distance=fallback_max_radius_m,
             )
             ok = matched_edge.notna()
             if ok.any():
@@ -476,6 +484,7 @@ def _match_trips(
     road_type_enabled: bool,
     same_type_max_radius_m: float,
     fallback_enabled: bool,
+    fallback_max_radius_m: float | None,
     route_sequence_enabled: bool,
     route_sequence_max_radius_m: float,
     route_sequence_min_dot: float,
@@ -506,6 +515,7 @@ def _match_trips(
         same_type_max_radius_m=same_type_max_radius_m,
         fallback_enabled=fallback_enabled,
         road_type_enabled=road_type_enabled,
+        fallback_max_radius_m=fallback_max_radius_m,
     )
     out["from_route_match_link"] = pd.NA
     out["from_route_match_osm_id"] = pd.NA
@@ -550,9 +560,64 @@ def _match_trips(
         same_type_max_radius_m=same_type_max_radius_m,
         fallback_enabled=fallback_enabled,
         road_type_enabled=road_type_enabled,
+        fallback_max_radius_m=fallback_max_radius_m,
     )
     out["match_ok"] = out["from_edge"].notna() & out["to_edge"].notna()
     return out
+
+
+def _endpoint_distance_diagnostics(matched: pd.DataFrame) -> dict[str, dict[str, float | int]]:
+    series = {
+        "from": pd.to_numeric(matched.get("from_edge_dist_m"), errors="coerce"),
+        "to": pd.to_numeric(matched.get("to_edge_dist_m"), errors="coerce"),
+    }
+    series["max"] = pd.concat([series["from"], series["to"]], axis=1).max(axis=1)
+
+    out: dict[str, dict[str, float | int]] = {}
+    for label, values in series.items():
+        valid = values.dropna().astype(float)
+        row: dict[str, float | int] = {"count": int(valid.size)}
+        if valid.empty:
+            for pct in (50, 90, 95, 99, 100):
+                row[f"p{pct}_m"] = float("nan")
+        else:
+            for pct in (50, 90, 95, 99, 100):
+                row[f"p{pct}_m"] = float(np.percentile(valid.to_numpy(dtype=float), pct))
+        for threshold in DISTANCE_DIAGNOSTIC_THRESHOLDS_M:
+            row[f"gt_{int(threshold)}m"] = int(valid.gt(threshold).sum())
+        out[label] = row
+    return out
+
+
+def _format_distance_diagnostics(diagnostics: dict[str, dict[str, float | int]]) -> str:
+    parts = []
+    for label in ("from", "to", "max"):
+        row = diagnostics.get(label, {})
+        parts.append(
+            f"{label}: p50={row.get('p50_m', float('nan')):.1f}m "
+            f"p90={row.get('p90_m', float('nan')):.1f}m "
+            f"p95={row.get('p95_m', float('nan')):.1f}m "
+            f"p99={row.get('p99_m', float('nan')):.1f}m "
+            f"max={row.get('p100_m', float('nan')):.1f}m"
+        )
+    return "; ".join(parts)
+
+
+def _apply_endpoint_distance_guardrail(
+    matched: pd.DataFrame,
+    max_distance_m: float | None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    out = matched.copy()
+    from_dist = pd.to_numeric(out["from_edge_dist_m"], errors="coerce")
+    to_dist = pd.to_numeric(out["to_edge_dist_m"], errors="coerce")
+    out["sumo_endpoint_max_dist_m"] = pd.concat([from_dist, to_dist], axis=1).max(axis=1)
+    out["match_ok"] = out["from_edge"].notna() & out["to_edge"].notna()
+
+    if max_distance_m is None:
+        return out, out.iloc[0:0].copy()
+
+    keep = out["match_ok"] & from_dist.le(max_distance_m) & to_dist.le(max_distance_m)
+    return out.loc[keep].copy(), out.loc[~keep].copy()
 
 
 def _load_sumo_edges(state: PipelineState) -> gpd.GeoDataFrame:
@@ -601,9 +666,15 @@ def run_match_sumo_edges_stage(state: PipelineState) -> None:
     start_edge_ids, end_edge_ids = _eligible_edge_ids(state, valid_edge_ids)
     road_type_enabled = bool(state.config.get("sumo_match_road_type_enabled", True))
     fallback_enabled = bool(state.config.get("sumo_match_fallback_enabled", True))
-    same_type_max_radius_m = float(state.config.get("sumo_match_same_type_max_radius_m", 1000.0))
+    max_endpoint_distance_m = _config_float(state.config, "max_sumo_endpoint_distance_m", 150.0)
+    same_type_max_radius_m = float(
+        _config_float(state.config, "sumo_match_same_type_max_radius_m", max_endpoint_distance_m or 150.0)
+    )
+    fallback_max_radius_m = _config_float(state.config, "sumo_match_fallback_max_radius_m", max_endpoint_distance_m)
     route_sequence_enabled = bool(state.config.get("sumo_match_route_sequence_enabled", True))
-    route_sequence_max_radius_m = float(state.config.get("sumo_match_route_sequence_max_radius_m", 1000.0))
+    route_sequence_max_radius_m = float(
+        _config_float(state.config, "sumo_match_route_sequence_max_radius_m", max_endpoint_distance_m or 150.0)
+    )
     route_sequence_min_dot = float(state.config.get("sumo_match_route_sequence_min_dot", 0.3))
     sumo_road_classes = _build_sumo_road_classes(state, valid_edge_ids)
     sumo_names = {e.getID(): e.getName() for e in state.sumo_net.getEdges(withInternal=False)}
@@ -636,10 +707,33 @@ def run_match_sumo_edges_stage(state: PipelineState) -> None:
         road_type_enabled=road_type_enabled,
         same_type_max_radius_m=same_type_max_radius_m,
         fallback_enabled=fallback_enabled,
+        fallback_max_radius_m=fallback_max_radius_m,
         route_sequence_enabled=route_sequence_enabled,
         route_sequence_max_radius_m=route_sequence_max_radius_m,
         route_sequence_min_dot=route_sequence_min_dot,
     )
+    state.sumo_endpoint_distance_diagnostics = _endpoint_distance_diagnostics(matched)
+    print(f"SUMO endpoint distances before guardrail: {_format_distance_diagnostics(state.sumo_endpoint_distance_diagnostics)}")
+
+    matched, dropped = _apply_endpoint_distance_guardrail(matched, max_endpoint_distance_m)
+    state.sumo_endpoint_guardrail_dropped_count = int(len(dropped))
+    state.sumo_endpoint_guardrail_dropped_by_type = (
+        dropped["crossing_type"].fillna("<missing>").astype(str).value_counts().sort_index().to_dict()
+        if not dropped.empty and "crossing_type" in dropped.columns
+        else {}
+    )
+    if max_endpoint_distance_m is None:
+        print("SUMO endpoint distance guardrail disabled.")
+    elif state.sumo_endpoint_guardrail_dropped_count:
+        dropped_by_type = ", ".join(
+            f"{key}={value}" for key, value in state.sumo_endpoint_guardrail_dropped_by_type.items()
+        )
+        print(
+            f"Dropped {state.sumo_endpoint_guardrail_dropped_count} trips beyond "
+            f"{max_endpoint_distance_m:.1f} m SUMO endpoint guardrail ({dropped_by_type})."
+        )
+    else:
+        print(f"Dropped 0 trips beyond {max_endpoint_distance_m:.1f} m SUMO endpoint guardrail.")
 
     if "dep_time" in matched.columns:
         matched = matched.sort_values("dep_time").reset_index(drop=True)

@@ -123,6 +123,11 @@ def main():
         f"✔ Wrote {stats['scaled_trips_matched']} matched scaled trips "
         f"({stats['scaled_trips_match_ok']} match_ok) to {state.scaled_trips_matched_path}"
     )
+    if stats.get("scaled_trips_guardrail_dropped", 0):
+        dropped_by_type = ", ".join(
+            f"{key}={value}" for key, value in (state.sumo_endpoint_guardrail_dropped_by_type or {}).items()
+        )
+        print(f"✔ Dropped {stats['scaled_trips_guardrail_dropped']} trips by SUMO endpoint guardrail ({dropped_by_type})")
     print(f"✔ Wrote {stats['sumo_trips_xml_rows']} SUMO trips XML rows to {state.sumo_trips_path}")
     if stats["duarouter_ran"]:
         print(f"✔ Wrote {stats['sumo_routes_rows']} routed trips ({stats['sumo_routes_pct']:.2f}%) to {state.sumo_routes_path}")
