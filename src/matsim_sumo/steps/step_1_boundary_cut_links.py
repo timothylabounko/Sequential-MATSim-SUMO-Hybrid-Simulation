@@ -9,10 +9,11 @@ from matsim_sumo.pipeline_state import PipelineState
 
 # Compute cut link IDs from network geometry and boundary
 def compute_cut_link_ids_from_geo(geo: gpd.GeoDataFrame, boundary) -> pd.Series:
-    # Keep only true boundary-crossing links (endpoint side changes).
     start_inside = geo["geometry"].apply(lambda g: boundary.covers(Point(g.coords[0])))
     end_inside = geo["geometry"].apply(lambda g: boundary.covers(Point(g.coords[-1])))
-    crosses = start_inside ^ end_inside
+    crosses = (start_inside ^ end_inside) | (
+        geo["geometry"].intersects(boundary.boundary) & ~geo["geometry"].covered_by(boundary)
+    )
     return (
         geo.loc[crosses, "link_id"]
         .astype(str)
