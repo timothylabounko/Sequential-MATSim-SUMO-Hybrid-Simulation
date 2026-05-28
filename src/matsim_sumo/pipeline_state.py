@@ -52,6 +52,7 @@ class PipelineState:
     events_cut: Optional[pd.DataFrame] = None
     crossing_events: Optional[pd.DataFrame] = None
     crossing_segments_timed: Optional[pd.DataFrame] = None
+    crossing_segments_outside_boundary_dropped_count: Optional[int] = None
     trips_inside: Optional[pd.DataFrame] = None
     combined_trips: Optional[pd.DataFrame] = None
     scaled_trips: Optional[pd.DataFrame] = None

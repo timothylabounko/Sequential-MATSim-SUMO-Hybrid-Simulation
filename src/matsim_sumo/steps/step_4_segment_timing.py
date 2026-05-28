@@ -1,7 +1,9 @@
 import subprocess
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+from shapely import covers, distance, points
 from shapely.geometry import LineString
 
 from matsim_sumo.csv_writer import CsvWriter
@@ -188,6 +190,27 @@ def add_segment_coordinates(
     return out
 
 
+def _inside_or_near_boundary(boundary, x: pd.Series, y: pd.Series, tolerance_m: float) -> pd.Series:
+    xy = pd.DataFrame({"x": pd.to_numeric(x, errors="coerce"), "y": pd.to_numeric(y, errors="coerce")})
+    valid = xy["x"].notna() & xy["y"].notna()
+    ok = pd.Series(False, index=x.index)
+    if valid.any():
+        pts = points(xy.loc[valid, "x"].to_numpy(dtype=float), xy.loc[valid, "y"].to_numpy(dtype=float))
+        ok.loc[valid] = np.asarray(covers(boundary, pts) | (distance(pts, boundary) <= tolerance_m), dtype=bool)
+    return ok
+
+
+def drop_segments_outside_boundary(
+    df_segments: pd.DataFrame,
+    boundary,
+    tolerance_m: float = 1.0,
+) -> tuple[pd.DataFrame, int]:
+    start_ok = _inside_or_near_boundary(boundary, df_segments["start_x"], df_segments["start_y"], tolerance_m)
+    end_ok = _inside_or_near_boundary(boundary, df_segments["end_x"], df_segments["end_y"], tolerance_m)
+    keep = start_ok & end_ok
+    return df_segments.loc[keep].copy(), int((~keep).sum())
+
+
 def _segment_timing_deps(state: PipelineState):
     return [
         file_dep(state.events_path),
@@ -198,13 +221,14 @@ def _segment_timing_deps(state: PipelineState):
         file_dep(state.plans_path),
         param_dep("modes_keep", tuple(state.config["modes_keep"])),
         param_dep("network_crs", state.config.get("network_crs", "EPSG:2056")),
+        param_dep("segment_endpoint_boundary_tolerance_m", state.config.get("segment_endpoint_boundary_tolerance_m", 1.0)),
     ]
 
 
 @disk_cache(depends_on=lambda state: _segment_timing_deps(state), step_name="segment_timing")
 def _compute_segment_timing_cached(
     state: PipelineState,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, int]:
     if state.crossing_segments is None:
         raise ValueError("crossing_segments must be available before segment timing stage.")
 
@@ -219,7 +243,12 @@ def _compute_segment_timing_cached(
         link_endpoints=link_endpoints,
         cut_link_info=cut_link_info,
     )
-    return cut_link_info, events_cut, crossing_events, crossing_segments_timed
+    crossing_segments_timed, dropped = drop_segments_outside_boundary(
+        crossing_segments_timed,
+        state.boundary,
+        tolerance_m=float(state.config.get("segment_endpoint_boundary_tolerance_m", 1.0)),
+    )
+    return cut_link_info, events_cut, crossing_events, crossing_segments_timed, dropped
 
 
 def _write_events_cut_if_missing(events_cut: pd.DataFrame, out_path: Path | str) -> None:
@@ -237,8 +266,15 @@ def run_segment_timing_stage(state: PipelineState) -> None:
         state.events_cut,
         state.crossing_events,
         state.crossing_segments_timed,
+        state.crossing_segments_outside_boundary_dropped_count,
     ) = _compute_segment_timing_cached(state, no_cache=bool(state.config.get("no_cache", False)))
 
+    if state.crossing_segments_outside_boundary_dropped_count:
+        print(
+            "Dropped "
+            f"{state.crossing_segments_outside_boundary_dropped_count} crossing segments outside boundary "
+            f"(tolerance {float(state.config.get('segment_endpoint_boundary_tolerance_m', 1.0)):.2f} m)."
+        )
     _write_events_cut_if_missing(state.events_cut, state.events_cut_csv_path)
     if output_needs_refresh(_compute_segment_timing_cached, state.crossing_segments_timed_path):
         CsvWriter.write_df(state.crossing_segments_timed, state.crossing_segments_timed_path)
