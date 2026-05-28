@@ -6,11 +6,7 @@ import sys
 from pathlib import Path
 
 import geopandas as gpd
-import matplotlib
 import yaml
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = PROJECT_ROOT / "src"
@@ -19,21 +15,11 @@ if str(SRC_DIR) not in sys.path:
 
 from matsim_sumo.matsim_trip_inside_filter import resolve_sumo_network_path
 from matsim_sumo.network_preprocessing.network_preprocessing import preprocess_sumo_network_to_lv95
+from matsim_sumo.plot.boundary_confirmation import plot_sumo_network_boundary
 
 
 def _project_path(path: Path) -> Path:
     return path if path.is_absolute() else PROJECT_ROOT / path
-
-
-def plot_sumo_network_boundary(sumo_gdf: gpd.GeoDataFrame, boundary_gdf: gpd.GeoDataFrame, out_path: Path) -> None:
-    fig, ax = plt.subplots(figsize=(10, 10))
-    sumo_gdf.plot(ax=ax, color="black", linewidth=0.15, alpha=0.7, label="SUMO Network")
-    boundary_gdf.boundary.plot(ax=ax, color="black", linewidth=1.2, label="Boundary")
-    ax.set_title("SUMO Network with Boundary")
-    ax.set_aspect("equal")
-    ax.legend()
-    fig.savefig(out_path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
 
 
 def _load_sumo_geo(cfg: dict) -> gpd.GeoDataFrame:

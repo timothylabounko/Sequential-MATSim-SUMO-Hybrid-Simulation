@@ -4,6 +4,7 @@ from time import perf_counter
 from matsim_sumo.network_preprocessing.network_preprocessing import preprocess_sumo_network_to_lv95
 from matsim_sumo.network_preprocessing.sumo_boundary import compute_and_save_sumo_boundary
 from matsim_sumo.pipeline_state import PipelineState
+from matsim_sumo.plot.boundary_confirmation import confirm_boundary_preview
 from matsim_sumo.steps.step_1_boundary_cut_links import run_boundary_cut_links_stage
 from matsim_sumo.steps.step_2_plans_car_legs import run_plans_car_legs_stage
 from matsim_sumo.steps.step_3_crossing_segments import run_crossing_segments_stage
@@ -104,6 +105,10 @@ def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
         )
     else:
         print(f"✔ Step 0 SUMO boundary skipped (exists): {state.boundary_path}")
+    _run_step(
+        "Step 0 boundary confirmation",
+        lambda: confirm_boundary_preview(state.sumo_network_geo, state.boundary_path, state.output_dir),
+    )
     _run_step("Step 1 boundary cut links", lambda: run_boundary_cut_links_stage(state, projection=network_crs))
     _run_step("Step 2 plans car legs", lambda: run_plans_car_legs_stage(state))
     _run_step("Step 3 crossing segments", lambda: run_crossing_segments_stage(state))
