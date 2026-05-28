@@ -5,6 +5,7 @@ import pandas as pd
 from shapely.geometry import LineString
 
 from matsim_sumo.csv_writer import CsvWriter
+from matsim_sumo.disk_cache import disk_cache, file_dep, output_needs_refresh, param_dep
 from matsim_sumo.pipeline_state import PipelineState
 
 
@@ -25,10 +26,10 @@ def sec_to_hhmmss(seconds) -> str | float:
 
 
 # Runs shell script to extract cut link events from the full events file
-def run_event_extraction_script(state: PipelineState) -> None:
+def run_event_extraction_script(state: PipelineState, force: bool = False) -> None:
     out_csv = Path(state.events_cut_csv_path)
     # Skip to save time if already exists
-    if out_csv.exists():
+    if out_csv.exists() and not force:
         return
 
     script = Path(state.extract_events_script_path)
@@ -185,20 +186,59 @@ def add_segment_coordinates(
     out["end_x"] = out["end_x"].fillna(out["end_link"].map(ep["ex"]))
     out["end_y"] = out["end_y"].fillna(out["end_link"].map(ep["ey"]))
     return out
-def run_segment_timing_stage(state: PipelineState) -> None:
+
+
+def _segment_timing_deps(state: PipelineState):
+    return [
+        file_dep(state.events_path),
+        file_dep(state.extract_events_script_path),
+        file_dep(state.cut_links_csv_path),
+        file_dep(state.network_path),
+        file_dep(state.boundary_path),
+        file_dep(state.plans_path),
+        param_dep("modes_keep", tuple(state.config["modes_keep"])),
+        param_dep("network_crs", state.config.get("network_crs", "EPSG:2056")),
+    ]
+
+
+@disk_cache(depends_on=lambda state: _segment_timing_deps(state), step_name="segment_timing")
+def _compute_segment_timing_cached(
+    state: PipelineState,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if state.crossing_segments is None:
         raise ValueError("crossing_segments must be available before segment timing stage.")
 
-    run_event_extraction_script(state)
-    state.cut_link_info = build_cut_link_info(state)
+    run_event_extraction_script(state, force=True)
+    cut_link_info = build_cut_link_info(state)
     link_endpoints = build_link_endpoint_info(state)
-    state.events_cut = read_cut_events(state.events_cut_csv_path)
-    state.crossing_events = build_crossing_event_times(state.events_cut, state.cut_link_info)
-    state.crossing_segments_timed = fill_segment_dep_time(state.crossing_segments, state.crossing_events)
-    state.crossing_segments_timed = add_segment_coordinates(
-        state.crossing_segments_timed,
+    events_cut = read_cut_events(state.events_cut_csv_path)
+    crossing_events = build_crossing_event_times(events_cut, cut_link_info)
+    crossing_segments_timed = fill_segment_dep_time(state.crossing_segments, crossing_events)
+    crossing_segments_timed = add_segment_coordinates(
+        crossing_segments_timed,
         link_endpoints=link_endpoints,
-        cut_link_info=state.cut_link_info,
+        cut_link_info=cut_link_info,
     )
+    return cut_link_info, events_cut, crossing_events, crossing_segments_timed
 
-    CsvWriter.write_df(state.crossing_segments_timed, state.crossing_segments_timed_path)
+
+def _write_events_cut_if_missing(events_cut: pd.DataFrame, out_path: Path | str) -> None:
+    out = Path(out_path)
+    if out.exists():
+        return
+    out.parent.mkdir(parents=True, exist_ok=True)
+    cols = [col for col in ("time", "type", "link_id", "vehicle") if col in events_cut.columns]
+    events_cut.loc[:, cols].to_csv(out, index=False)
+
+
+def run_segment_timing_stage(state: PipelineState) -> None:
+    (
+        state.cut_link_info,
+        state.events_cut,
+        state.crossing_events,
+        state.crossing_segments_timed,
+    ) = _compute_segment_timing_cached(state, no_cache=bool(state.config.get("no_cache", False)))
+
+    _write_events_cut_if_missing(state.events_cut, state.events_cut_csv_path)
+    if output_needs_refresh(_compute_segment_timing_cached, state.crossing_segments_timed_path):
+        CsvWriter.write_df(state.crossing_segments_timed, state.crossing_segments_timed_path)

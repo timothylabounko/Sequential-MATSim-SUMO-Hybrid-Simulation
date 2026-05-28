@@ -9,6 +9,7 @@ import pandas as pd
 from shapely.geometry import Point
 
 from matsim_sumo.csv_writer import CsvWriter
+from matsim_sumo.disk_cache import disk_cache, file_dep, output_needs_refresh, param_dep
 from matsim_sumo.pipeline_state import PipelineState
 
 SECOND_NEAREST_EXTRA_M = 50.0
@@ -657,7 +658,41 @@ def _eligible_edge_ids(state: PipelineState, valid_edge_ids: set[str]) -> tuple[
     return start_ids, end_ids
 
 
-def run_match_sumo_edges_stage(state: PipelineState) -> None:
+def _match_sumo_edges_deps(state: PipelineState):
+    deps = [
+        file_dep(state.plans_path),
+        file_dep(state.trips_path),
+        file_dep(state.events_path),
+        file_dep(state.extract_events_script_path),
+        file_dep(state.network_path),
+        file_dep(state.boundary_path),
+        file_dep(state.sumo_network_path),
+        param_dep("modes_keep", tuple(state.config["modes_keep"])),
+        param_dep("network_crs", state.config.get("network_crs", "EPSG:2056")),
+        param_dep("scale_factor", float(state.config["scale_factor"])),
+        param_dep("dep_time_jitter_seconds", int(state.config["dep_time_jitter_seconds"])),
+        param_dep("coord_jitter_radius_m", float(state.config["coord_jitter_radius_m"])),
+        param_dep("demand_scaling_seed", int(state.config["demand_scaling_seed"])),
+        param_dep("amenity_kdtree_enabled", bool(state.config["amenity_kdtree_enabled"])),
+        param_dep("sumo_vclass_map", state.config["sumo_vclass_map"]),
+        param_dep("sumo_match_road_type_enabled", bool(state.config.get("sumo_match_road_type_enabled", True))),
+        param_dep("sumo_match_same_type_max_radius_m", state.config.get("sumo_match_same_type_max_radius_m")),
+        param_dep("sumo_match_fallback_enabled", bool(state.config.get("sumo_match_fallback_enabled", True))),
+        param_dep("sumo_match_fallback_max_radius_m", state.config.get("sumo_match_fallback_max_radius_m")),
+        param_dep("sumo_match_route_sequence_enabled", bool(state.config.get("sumo_match_route_sequence_enabled", True))),
+        param_dep("sumo_match_route_sequence_max_radius_m", state.config.get("sumo_match_route_sequence_max_radius_m")),
+        param_dep("sumo_match_route_sequence_min_dot", float(state.config.get("sumo_match_route_sequence_min_dot", 0.3))),
+        param_dep("max_sumo_endpoint_distance_m", state.config.get("max_sumo_endpoint_distance_m")),
+    ]
+    if state.config["amenity_kdtree_enabled"]:
+        deps.append(file_dep(state.config["amenities_path"]))
+    return deps
+
+
+@disk_cache(depends_on=lambda state: _match_sumo_edges_deps(state), step_name="match_sumo_edges")
+def _compute_match_sumo_edges_cached(
+    state: PipelineState,
+) -> tuple[pd.DataFrame, dict[str, dict[str, float | int]], int, dict[str, int]]:
     if state.scaled_trips is None:
         state.scaled_trips = pd.read_csv(state.scaled_trips_path, sep=";", low_memory=False)
     edges = _load_sumo_edges(state)
@@ -712,16 +747,25 @@ def run_match_sumo_edges_stage(state: PipelineState) -> None:
         route_sequence_max_radius_m=route_sequence_max_radius_m,
         route_sequence_min_dot=route_sequence_min_dot,
     )
-    state.sumo_endpoint_distance_diagnostics = _endpoint_distance_diagnostics(matched)
-    print(f"SUMO endpoint distances before guardrail: {_format_distance_diagnostics(state.sumo_endpoint_distance_diagnostics)}")
+    diagnostics = _endpoint_distance_diagnostics(matched)
 
     matched, dropped = _apply_endpoint_distance_guardrail(matched, max_endpoint_distance_m)
-    state.sumo_endpoint_guardrail_dropped_count = int(len(dropped))
-    state.sumo_endpoint_guardrail_dropped_by_type = (
+    dropped_count = int(len(dropped))
+    dropped_by_type = (
         dropped["crossing_type"].fillna("<missing>").astype(str).value_counts().sort_index().to_dict()
         if not dropped.empty and "crossing_type" in dropped.columns
         else {}
     )
+    if "dep_time" in matched.columns:
+        matched = matched.sort_values("dep_time").reset_index(drop=True)
+    else:
+        matched = matched.reset_index(drop=True)
+    return matched, diagnostics, dropped_count, dropped_by_type
+
+
+def _log_match_sumo_edges_result(state: PipelineState) -> None:
+    print(f"SUMO endpoint distances before guardrail: {_format_distance_diagnostics(state.sumo_endpoint_distance_diagnostics)}")
+    max_endpoint_distance_m = _config_float(state.config, "max_sumo_endpoint_distance_m", 150.0)
     if max_endpoint_distance_m is None:
         print("SUMO endpoint distance guardrail disabled.")
     elif state.sumo_endpoint_guardrail_dropped_count:
@@ -735,9 +779,14 @@ def run_match_sumo_edges_stage(state: PipelineState) -> None:
     else:
         print(f"Dropped 0 trips beyond {max_endpoint_distance_m:.1f} m SUMO endpoint guardrail.")
 
-    if "dep_time" in matched.columns:
-        matched = matched.sort_values("dep_time").reset_index(drop=True)
-    else:
-        matched = matched.reset_index(drop=True)
-    state.scaled_trips_matched = matched
-    CsvWriter.write_df(state.scaled_trips_matched, state.scaled_trips_matched_path)
+
+def run_match_sumo_edges_stage(state: PipelineState) -> None:
+    (
+        state.scaled_trips_matched,
+        state.sumo_endpoint_distance_diagnostics,
+        state.sumo_endpoint_guardrail_dropped_count,
+        state.sumo_endpoint_guardrail_dropped_by_type,
+    ) = _compute_match_sumo_edges_cached(state, no_cache=bool(state.config.get("no_cache", False)))
+    _log_match_sumo_edges_result(state)
+    if output_needs_refresh(_compute_match_sumo_edges_cached, state.scaled_trips_matched_path):
+        CsvWriter.write_df(state.scaled_trips_matched, state.scaled_trips_matched_path)

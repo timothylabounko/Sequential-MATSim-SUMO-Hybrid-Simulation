@@ -7,6 +7,7 @@ from shapely import covers, points
 
 from matsim_sumo.amenities_kdtree import AmenitiesKDTree
 from matsim_sumo.csv_writer import CsvWriter
+from matsim_sumo.disk_cache import disk_cache, file_dep, output_needs_refresh, param_dep
 from matsim_sumo.pipeline_state import PipelineState
 from matsim_sumo.plot.scaled_trips_start_end_plots import run_scaled_trips_plot_stage
 
@@ -137,7 +138,29 @@ def scale_demand(
     return pd.concat([originals, clones], ignore_index=True)
 
 
-def run_demand_scaling_stage(state: PipelineState) -> None:
+def _demand_scaling_deps(state: PipelineState):
+    deps = [
+        file_dep(state.combined_trips_path),
+        file_dep(state.crossing_segments_timed_path),
+        file_dep(state.trips_inside_path),
+        file_dep(state.network_path),
+        file_dep(state.boundary_path),
+        param_dep("output_dir", str(state.output_dir)),
+        param_dep("modes_keep", tuple(state.config["modes_keep"])),
+        param_dep("network_crs", state.config.get("network_crs", "EPSG:2056")),
+        param_dep("scale_factor", float(state.config["scale_factor"])),
+        param_dep("dep_time_jitter_seconds", int(state.config["dep_time_jitter_seconds"])),
+        param_dep("coord_jitter_radius_m", float(state.config["coord_jitter_radius_m"])),
+        param_dep("demand_scaling_seed", int(state.config["demand_scaling_seed"])),
+        param_dep("amenity_kdtree_enabled", bool(state.config["amenity_kdtree_enabled"])),
+    ]
+    if state.config["amenity_kdtree_enabled"]:
+        deps.append(file_dep(state.config["amenities_path"]))
+    return deps
+
+
+@disk_cache(depends_on=lambda state: _demand_scaling_deps(state), step_name="demand_scaling")
+def _compute_scaled_demand_cached(state: PipelineState) -> pd.DataFrame:
     if state.combined_trips is None or state.network_geo is None:
         raise ValueError("combined_trips and network_geo must be available before demand scaling stage.")
     amenities = None
@@ -153,7 +176,7 @@ def run_demand_scaling_stage(state: PipelineState) -> None:
             weight_col=AMENITIES_WEIGHT_COL,
             boundary_path=state.boundary_path,
         )
-    state.scaled_trips = scale_demand(
+    return scale_demand(
         state.combined_trips,
         scale_factor=float(state.config["scale_factor"]),
         dep_time_jitter_s=int(state.config["dep_time_jitter_seconds"]),
@@ -163,5 +186,10 @@ def run_demand_scaling_stage(state: PipelineState) -> None:
         network_geo=state.network_geo,
         amenities=amenities,
     )
-    CsvWriter.write_df(state.scaled_trips, state.scaled_trips_path)
-    run_scaled_trips_plot_stage(state)
+
+
+def run_demand_scaling_stage(state: PipelineState) -> None:
+    state.scaled_trips = _compute_scaled_demand_cached(state, no_cache=bool(state.config.get("no_cache", False)))
+    if output_needs_refresh(_compute_scaled_demand_cached, state.scaled_trips_path):
+        CsvWriter.write_df(state.scaled_trips, state.scaled_trips_path)
+        run_scaled_trips_plot_stage(state)

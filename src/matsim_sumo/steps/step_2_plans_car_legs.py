@@ -4,6 +4,7 @@ import matsim
 import pandas as pd
 
 from matsim_sumo.csv_writer import CsvWriter
+from matsim_sumo.disk_cache import disk_cache, file_dep, output_needs_refresh, param_dep
 from matsim_sumo.pipeline_state import PipelineState
 
 
@@ -52,10 +53,25 @@ def extract_legs_from_plans(plans_path: Path | str, modes_keep: object = None) -
     return pd.DataFrame.from_records(rows, columns=LEG_COLUMNS)
 
 
+@disk_cache(
+    depends_on=lambda plans_path, modes_keep: [
+        file_dep(plans_path),
+        param_dep("modes_keep", tuple(modes_keep or ())),
+    ],
+    step_name="plans_car_legs",
+)
+def _extract_legs_from_plans_cached(plans_path: Path | str, modes_keep: object = None) -> pd.DataFrame:
+    return extract_legs_from_plans(plans_path=plans_path, modes_keep=modes_keep)
+
+
 def run_plans_car_legs_stage(state: PipelineState) -> None:
-    state.car_legs = extract_legs_from_plans(
+    state.car_legs = _extract_legs_from_plans_cached(
         plans_path=state.plans_path,
         modes_keep=state.config["modes_keep"],
+        no_cache=bool(state.config.get("no_cache", False)),
     )
-    if state.config["write_intermediates"]:
+    if state.config["write_intermediates"] and output_needs_refresh(
+        _extract_legs_from_plans_cached,
+        state.car_legs_path,
+    ):
         CsvWriter.write_df(state.car_legs, state.car_legs_path)

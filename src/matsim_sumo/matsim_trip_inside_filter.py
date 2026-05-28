@@ -81,13 +81,12 @@ def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
             state.sumo_network_path,
             vclasses,
             state.sumo_network_lv95_path,
+            no_cache=bool(state.config.get("no_cache", False)),
         )
 
     _run_step("Step 0 SUMO network preprocessing", _run_sumo_network_preprocessing)
 
     def _run_sumo_boundary() -> None:
-        if state.boundary_path.exists() and bool(state.config.get("boundary_force_rebuild", False)):
-            state.boundary_path.unlink()
         compute_and_save_sumo_boundary(
             state.sumo_network_geo,
             state.boundary_path,
@@ -96,15 +95,13 @@ def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
             inward_buffer_m=float(state.config.get("sumo_boundary_inward_buffer_m", 50.0)),
             simplify_m=float(state.config.get("sumo_boundary_simplify_m", 40.0)),
             outward_buffer_m=float(state.config.get("sumo_boundary_outward_buffer_m", 100.0)),
+            sumo_network_path=state.sumo_network_path,
+            vclasses=vclasses,
+            no_cache=bool(state.config.get("no_cache", False))
+            or bool(state.config.get("boundary_force_rebuild", False)),
         )
 
-    if bool(state.config.get("boundary_force_rebuild", False)) or not state.boundary_path.exists():
-        _run_step(
-            "Step 0 SUMO boundary",
-            _run_sumo_boundary,
-        )
-    else:
-        print(f"✔ Step 0 SUMO boundary skipped (exists): {state.boundary_path}")
+    _run_step("Step 0 SUMO boundary", _run_sumo_boundary)
     _run_step(
         "Step 0 boundary confirmation",
         lambda: confirm_boundary_preview(state.sumo_network_geo, state.boundary_path, state.output_dir),

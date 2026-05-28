@@ -9,19 +9,27 @@ import sumolib
 from pyproj import Transformer
 from shapely.geometry import LineString
 
+from matsim_sumo.disk_cache import disk_cache, file_dep, output_needs_refresh, param_dep
+
 
 def _edge_allows_any(edge, vclasses: tuple[str, ...]) -> bool:
     return any(edge.allows(vc) for vc in vclasses)
 
 
-def preprocess_sumo_network_to_lv95(
+@disk_cache(
+    depends_on=lambda net, network_path, vclasses: [
+        file_dep(network_path),
+        param_dep("vclasses", tuple(dict.fromkeys(vclasses))),
+    ],
+    step_name="sumo_network_lv95",
+)
+def _preprocess_sumo_network_geo_cached(
+    net,
     network_path: str | Path,
     vclasses: tuple[str, ...],
-    out_path: str | Path,
-) -> tuple[object, gpd.GeoDataFrame]:
+) -> gpd.GeoDataFrame:
     import networkx as nx
 
-    net = sumolib.net.readNet(str(network_path), withInternal=False)
     to_lv95 = Transformer.from_crs("EPSG:4326", "EPSG:2056", always_xy=True).transform
     vclasses = tuple(dict.fromkeys(vclasses))
 
@@ -60,9 +68,22 @@ def preprocess_sumo_network_to_lv95(
         geometry=[geom for _, geom in rows],
         crs="EPSG:2056",
     )
+    return geo
+
+
+def preprocess_sumo_network_to_lv95(
+    network_path: str | Path,
+    vclasses: tuple[str, ...],
+    out_path: str | Path,
+    *,
+    no_cache: bool = False,
+) -> tuple[object, gpd.GeoDataFrame]:
+    net = sumolib.net.readNet(str(network_path), withInternal=False)
+    geo = _preprocess_sumo_network_geo_cached(net, network_path, vclasses, no_cache=no_cache)
     out = Path(out_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    geo.to_file(out, driver="GeoJSON")
+    if output_needs_refresh(_preprocess_sumo_network_geo_cached, out):
+        out.parent.mkdir(parents=True, exist_ok=True)
+        geo.to_file(out, driver="GeoJSON")
     return net, geo
 
 

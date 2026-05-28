@@ -3,6 +3,7 @@ import pandas as pd
 from shapely.geometry import Point
 
 from matsim_sumo.csv_writer import CsvWriter
+from matsim_sumo.disk_cache import disk_cache, file_dep, output_needs_refresh, param_dep
 from matsim_sumo.pipeline_state import PipelineState
 
 
@@ -164,20 +165,45 @@ def split_inside_segments(df_legs_cut: pd.DataFrame) -> pd.DataFrame:
             )
 
     return pd.DataFrame.from_records(rows)
-def run_crossing_segments_stage(state: PipelineState) -> None:  
+
+
+def _crossing_segment_deps(state: PipelineState):
+    return [
+        file_dep(state.plans_path),
+        file_dep(state.network_path),
+        file_dep(state.boundary_path),
+        file_dep(state.cut_links_csv_path),
+        param_dep("modes_keep", tuple(state.config["modes_keep"])),
+        param_dep("network_crs", state.config.get("network_crs", "EPSG:2056")),
+    ]
+
+
+@disk_cache(depends_on=lambda state: _crossing_segment_deps(state), step_name="crossing_segments")
+def _compute_crossing_segments_cached(state: PipelineState) -> tuple[pd.DataFrame, pd.DataFrame]:
     if state.car_legs is None or state.cut_link_ids is None:
         raise ValueError("car_legs and cut_link_ids must be available before crossing stage.")
     if state.network_geo is None or state.boundary is None:
         raise ValueError("network_geo and boundary must be available before crossing stage.")
 
-    state.car_legs_cut = filter_legs_touching_cut_links(state.car_legs, state.cut_link_ids)
-    state.car_legs_cut = annotate_leg_entry_side(
-        state.car_legs_cut,
+    car_legs_cut = filter_legs_touching_cut_links(state.car_legs, state.cut_link_ids)
+    car_legs_cut = annotate_leg_entry_side(
+        car_legs_cut,
         state.network_geo,
         state.boundary,
         state.cut_link_ids,
     )
-    state.crossing_segments = split_inside_segments(state.car_legs_cut)
+    crossing_segments = split_inside_segments(car_legs_cut)
+    return car_legs_cut, crossing_segments
 
-    if state.config["write_intermediates"]:
+
+def run_crossing_segments_stage(state: PipelineState) -> None:
+    state.car_legs_cut, state.crossing_segments = _compute_crossing_segments_cached(
+        state,
+        no_cache=bool(state.config.get("no_cache", False)),
+    )
+
+    if state.config["write_intermediates"] and output_needs_refresh(
+        _compute_crossing_segments_cached,
+        state.crossing_segments_path,
+    ):
         CsvWriter.write_df(state.crossing_segments, state.crossing_segments_path)

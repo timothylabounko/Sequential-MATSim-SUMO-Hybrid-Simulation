@@ -2,6 +2,7 @@
 data/
 results/
 tmp/
+.cache/
 notebooks/
 *.xml
 *.xml.gz

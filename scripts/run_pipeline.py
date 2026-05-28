@@ -95,10 +95,16 @@ def main():
         default="configs/base_config.yaml",
         help="Path to YAML config file (default: configs/base_config.yaml)",
     )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Bypass persistent disk cache and recompute cached pipeline stages.",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
     config.setdefault("csv_gzip_compresslevel", 1)
+    config["no_cache"] = bool(args.no_cache)
     validate_config(config)
     CsvWriter.set_gzip_compresslevel(int(config["csv_gzip_compresslevel"]))
     state = build_pipeline_state(config)
