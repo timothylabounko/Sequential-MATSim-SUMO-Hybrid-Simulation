@@ -14,6 +14,8 @@ from matsim_sumo.pipeline_state import PipelineState
 
 SECOND_NEAREST_EXTRA_M = 50.0
 DISTANCE_DIAGNOSTIC_THRESHOLDS_M = (50.0, 100.0, 150.0, 250.0)
+LOCAL_ACTIVITY_ENDPOINT_CLASSES = {"residential", "living_street", "service"}
+MATCH_SUMO_EDGES_LOGIC_VERSION = 2
 
 
 def _config_float(config: dict, key: str, default: float | None) -> float | None:
@@ -146,7 +148,13 @@ def _read_matsim_link_metadata(
                 elem.clear()
                 continue
 
-            attrs: dict[str, str | None] = {"road_class": None, "osm_id": None, "name_norm": None}
+            attrs: dict[str, str | None] = {
+                "road_class": None,
+                "osm_id": None,
+                "name_norm": None,
+                "from_node": elem.get("from"),
+                "to_node": elem.get("to"),
+            }
             for child in elem:
                 if _local_name(child.tag) != "attributes":
                     continue
@@ -178,6 +186,25 @@ def _build_sumo_road_classes(state: PipelineState, edge_ids: Iterable[object]) -
         edge_id = edge.getID()
         if edge_id in needed:
             out[edge_id] = _normalize_road_class(edge.getType())
+            if len(out) == len(needed):
+                break
+    return out
+
+
+def _build_sumo_edge_metadata(state: PipelineState, edge_ids: Iterable[object]) -> dict[str, dict[str, str | None]]:
+    if state.sumo_net is None:
+        raise ValueError("state.sumo_net must be available before step 8.")
+    needed = {str(edge_id) for edge_id in edge_ids if not pd.isna(edge_id)}
+    out: dict[str, dict[str, str | None]] = {}
+    for edge in state.sumo_net.getEdges(withInternal=False):
+        edge_id = edge.getID()
+        if edge_id in needed:
+            out[edge_id] = {
+                "road_class": _normalize_road_class(edge.getType()),
+                "sumo_name": edge.getName(),
+                "from_node": edge.getFromNode().getID(),
+                "to_node": edge.getToNode().getID(),
+            }
             if len(out) == len(needed):
                 break
     return out
@@ -354,23 +381,53 @@ def _nearest_edges_type_aware(
     return edge, dist, matsim_class, sumo_class, policy
 
 
-def _build_route_candidate_indexes(start_edges: gpd.GeoDataFrame) -> tuple[dict[str, list[dict]], dict[tuple[str, str], list[dict]]]:
+def _build_route_candidate_indexes(
+    candidate_edges: gpd.GeoDataFrame,
+) -> tuple[dict[tuple[str, str], list[dict]], dict[str, list[dict]], dict[tuple[str, str], list[dict]]]:
+    by_node_pair: dict[tuple[str, str], list[dict]] = {}
     by_osm: dict[str, list[dict]] = {}
     by_name_class: dict[tuple[str, str], list[dict]] = {}
-    for row in start_edges.itertuples(index=False):
+    for row in candidate_edges.itertuples(index=False):
         rec = {
             "edge_id": str(row.edge_id),
             "osm_id": _sumo_base_osm_id(row.edge_id),
             "road_class": row.road_class,
             "name_norm": _normalize_name(getattr(row, "sumo_name", None)),
+            "from_node": getattr(row, "from_node", None),
+            "to_node": getattr(row, "to_node", None),
             "dx": float(row.edge_dx),
             "dy": float(row.edge_dy),
             "geometry": row.geometry,
         }
+        if rec["from_node"] and rec["to_node"]:
+            by_node_pair.setdefault((str(rec["from_node"]), str(rec["to_node"])), []).append(rec)
         by_osm.setdefault(rec["osm_id"], []).append(rec)
         if rec["name_norm"] and rec["road_class"]:
             by_name_class.setdefault((rec["name_norm"], rec["road_class"]), []).append(rec)
-    return by_osm, by_name_class
+    return by_node_pair, by_osm, by_name_class
+
+
+def _edges_reaching(
+    target_edge: object,
+    in_neighbors: dict[str, set[str]],
+    cache: dict[str, set[str]],
+) -> set[str]:
+    if target_edge is None or pd.isna(target_edge):
+        return set()
+    target = str(target_edge)
+    if target in cache:
+        return cache[target]
+
+    seen = {target}
+    stack = [target]
+    while stack:
+        edge_id = stack.pop()
+        for prev_edge in in_neighbors.get(edge_id, set()):
+            if prev_edge not in seen:
+                seen.add(prev_edge)
+                stack.append(prev_edge)
+    cache[target] = seen
+    return seen
 
 
 def _best_route_candidate(
@@ -379,12 +436,20 @@ def _best_route_candidate(
     point: Point,
     max_radius_m: float,
     min_dot: float,
+    target_edge: object,
+    in_neighbors: dict[str, set[str]],
+    reachability_cache: dict[str, set[str]],
 ) -> tuple[dict | None, float]:
     best: tuple[float, float, dict] | None = None
     mvx, mvy = float(meta.get("vx", np.nan)), float(meta.get("vy", np.nan))
     if not np.isfinite(mvx) or not np.isfinite(mvy):
         return None, np.nan
+    reachable = _edges_reaching(target_edge, in_neighbors, reachability_cache)
+    if not reachable:
+        return None, np.nan
     for candidate in candidates:
+        if candidate["edge_id"] not in reachable:
+            continue
         if meta.get("road_class") and candidate.get("road_class") and meta["road_class"] != candidate["road_class"]:
             continue
         dot = mvx * candidate["dx"] + mvy * candidate["dy"]
@@ -403,8 +468,9 @@ def _best_route_candidate(
 
 def _route_sequence_start_matches(
     trips: pd.DataFrame,
-    start_edges: gpd.GeoDataFrame,
+    candidate_edges: gpd.GeoDataFrame,
     matsim_link_metadata: dict[str, dict[str, object]],
+    in_neighbors: dict[str, set[str]],
     max_radius_m: float,
     min_dot: float,
 ) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series, pd.Series, pd.Series]:
@@ -414,22 +480,31 @@ def _route_sequence_start_matches(
     sumo_class = pd.Series(index=trips.index, dtype=object)
     route_link = pd.Series(index=trips.index, dtype=object)
     route_osm_id = pd.Series(index=trips.index, dtype=object)
-    if "route_links" not in trips.columns or start_edges.empty:
+    if "route_links" not in trips.columns or candidate_edges.empty:
         return edge, dist, matsim_class, sumo_class, route_link, route_osm_id
 
-    by_osm, by_name_class = _build_route_candidate_indexes(start_edges)
-    edge_class = dict(zip(start_edges["edge_id"].astype(str), start_edges["road_class"]))
+    by_node_pair, by_osm, by_name_class = _build_route_candidate_indexes(candidate_edges)
+    edge_class = dict(zip(candidate_edges["edge_id"].astype(str), candidate_edges["road_class"]))
     route_rows = trips["route_links"].fillna("").astype(str)
     crossing = trips.get("crossing_type", pd.Series("", index=trips.index)).astype(str)
     x = pd.to_numeric(trips["start_x"], errors="coerce")
     y = pd.to_numeric(trips["start_y"], errors="coerce")
-    eligible = crossing.isin({"entering", "pass_through"}) & route_rows.ne("") & x.notna() & y.notna()
-    cache: dict[tuple[str, float, float], tuple[object, float, object, object, object]] = {}
+    target_edges = trips.get("to_edge", pd.Series(pd.NA, index=trips.index))
+    eligible = (
+        crossing.isin({"entering", "pass_through"})
+        & route_rows.ne("")
+        & x.notna()
+        & y.notna()
+        & target_edges.notna()
+    )
+    cache: dict[tuple[str, float, float, str], tuple[object, float, object, object, object]] = {}
+    reachability_cache: dict[str, set[str]] = {}
 
     for idx in trips.index[eligible]:
         px, py = float(x.loc[idx]), float(y.loc[idx])
         route = route_rows.loc[idx]
-        key = (route, px, py)
+        target_edge = str(target_edges.loc[idx])
+        key = (route, px, py, target_edge)
         if key in cache:
             cached = cache[key]
         else:
@@ -442,16 +517,28 @@ def _route_sequence_start_matches(
                 osm_id = meta.get("osm_id")
                 candidate = None
                 candidate_dist = np.nan
+                candidate_groups = []
+                node_key = (meta.get("from_node"), meta.get("to_node"))
+                if all(node_key) and (str(node_key[0]), str(node_key[1])) in by_node_pair:
+                    candidate_groups.append(by_node_pair[(str(node_key[0]), str(node_key[1]))])
                 if osm_id and osm_id in by_osm:
-                    candidate, candidate_dist = _best_route_candidate(meta, by_osm[osm_id], point, max_radius_m, min_dot)
+                    candidate_groups.append(by_osm[osm_id])
                 elif meta.get("name_norm") and meta.get("road_class"):
+                    candidate_groups.append(by_name_class.get((meta["name_norm"], meta["road_class"]), []))
+
+                for candidates in candidate_groups:
                     candidate, candidate_dist = _best_route_candidate(
                         meta,
-                        by_name_class.get((meta["name_norm"], meta["road_class"]), []),
+                        candidates,
                         point,
                         max_radius_m,
                         min_dot,
+                        target_edge=target_edge,
+                        in_neighbors=in_neighbors,
+                        reachability_cache=reachability_cache,
                     )
+                    if candidate is not None:
+                        break
                 if candidate is not None:
                     cached = (
                         candidate["edge_id"],
@@ -480,6 +567,7 @@ def _match_trips(
     link_vectors: dict[str, tuple[float, float]],
     start_edge_ids: set[str],
     end_edge_ids: set[str],
+    in_neighbors: dict[str, set[str]],
     matsim_road_classes: dict[str, str | None],
     matsim_link_metadata: dict[str, dict[str, object]],
     road_type_enabled: bool,
@@ -520,30 +608,6 @@ def _match_trips(
     )
     out["from_route_match_link"] = pd.NA
     out["from_route_match_osm_id"] = pd.NA
-    if route_sequence_enabled:
-        (
-            seq_edge,
-            seq_dist,
-            seq_matsim_class,
-            seq_sumo_class,
-            seq_route_link,
-            seq_route_osm_id,
-        ) = _route_sequence_start_matches(
-            out,
-            start_edges,
-            matsim_link_metadata,
-            max_radius_m=route_sequence_max_radius_m,
-            min_dot=route_sequence_min_dot,
-        )
-        ok = seq_edge.notna()
-        if ok.any():
-            out.loc[ok, "from_edge"] = seq_edge.loc[ok]
-            out.loc[ok, "from_edge_dist_m"] = seq_dist.loc[ok]
-            out.loc[ok, "from_matsim_road_class"] = seq_matsim_class.loc[ok]
-            out.loc[ok, "from_sumo_road_class"] = seq_sumo_class.loc[ok]
-            out.loc[ok, "from_match_policy"] = "route_sequence"
-            out.loc[ok, "from_route_match_link"] = seq_route_link.loc[ok]
-            out.loc[ok, "from_route_match_osm_id"] = seq_route_osm_id.loc[ok]
     (
         out["to_edge"],
         out["to_edge_dist_m"],
@@ -563,6 +627,31 @@ def _match_trips(
         road_type_enabled=road_type_enabled,
         fallback_max_radius_m=fallback_max_radius_m,
     )
+    if route_sequence_enabled:
+        (
+            seq_edge,
+            seq_dist,
+            seq_matsim_class,
+            seq_sumo_class,
+            seq_route_link,
+            seq_route_osm_id,
+        ) = _route_sequence_start_matches(
+            out,
+            edges,
+            matsim_link_metadata,
+            in_neighbors=in_neighbors,
+            max_radius_m=route_sequence_max_radius_m,
+            min_dot=route_sequence_min_dot,
+        )
+        ok = seq_edge.notna()
+        if ok.any():
+            out.loc[ok, "from_edge"] = seq_edge.loc[ok]
+            out.loc[ok, "from_edge_dist_m"] = seq_dist.loc[ok]
+            out.loc[ok, "from_matsim_road_class"] = seq_matsim_class.loc[ok]
+            out.loc[ok, "from_sumo_road_class"] = seq_sumo_class.loc[ok]
+            out.loc[ok, "from_match_policy"] = "route_sequence"
+            out.loc[ok, "from_route_match_link"] = seq_route_link.loc[ok]
+            out.loc[ok, "from_route_match_osm_id"] = seq_route_osm_id.loc[ok]
     out["match_ok"] = out["from_edge"].notna() & out["to_edge"].notna()
     return out
 
@@ -613,12 +702,35 @@ def _apply_endpoint_distance_guardrail(
     to_dist = pd.to_numeric(out["to_edge_dist_m"], errors="coerce")
     out["sumo_endpoint_max_dist_m"] = pd.concat([from_dist, to_dist], axis=1).max(axis=1)
     out["match_ok"] = out["from_edge"].notna() & out["to_edge"].notna()
+    out["sumo_local_activity_endpoint_fallback"] = _local_activity_endpoint_fallback_mask(out)
 
-    if max_distance_m is None:
-        return out, out.iloc[0:0].copy()
+    keep = out["match_ok"] & ~out["sumo_local_activity_endpoint_fallback"]
+    if max_distance_m is not None:
+        keep &= from_dist.le(max_distance_m) & to_dist.le(max_distance_m)
 
-    keep = out["match_ok"] & from_dist.le(max_distance_m) & to_dist.le(max_distance_m)
     return out.loc[keep].copy(), out.loc[~keep].copy()
+
+
+def _local_activity_endpoint_fallback_mask(matched: pd.DataFrame) -> pd.Series:
+    crossing = matched.get("crossing_type", pd.Series("", index=matched.index)).astype(str)
+    false = pd.Series(False, index=matched.index)
+
+    from_class = matched.get("from_matsim_road_class", pd.Series(pd.NA, index=matched.index)).astype(str)
+    to_class = matched.get("to_matsim_road_class", pd.Series(pd.NA, index=matched.index)).astype(str)
+    from_policy = matched.get("from_match_policy", pd.Series("", index=matched.index)).astype(str)
+    to_policy = matched.get("to_match_policy", pd.Series("", index=matched.index)).astype(str)
+
+    bad_from = (
+        crossing.isin({"inside", "leaving"})
+        & from_policy.eq("fallback_any")
+        & from_class.isin(LOCAL_ACTIVITY_ENDPOINT_CLASSES)
+    )
+    bad_to = (
+        crossing.isin({"inside", "entering"})
+        & to_policy.eq("fallback_any")
+        & to_class.isin(LOCAL_ACTIVITY_ENDPOINT_CLASSES)
+    )
+    return false | bad_from | bad_to
 
 
 def _load_sumo_edges(state: PipelineState) -> gpd.GeoDataFrame:
@@ -636,14 +748,7 @@ def _load_sumo_edges(state: PipelineState) -> gpd.GeoDataFrame:
 def _eligible_edge_ids(state: PipelineState, valid_edge_ids: set[str]) -> tuple[set[str], set[str]]:
     if state.sumo_net is None:
         raise ValueError("state.sumo_net must be available before step 8.")
-    out_neighbors: dict[str, set[str]] = {}
-    in_neighbors: dict[str, set[str]] = {}
-    for e in state.sumo_net.getEdges(withInternal=False):
-        eid = e.getID()
-        if eid not in valid_edge_ids:
-            continue
-        out_neighbors[eid] = {n.getID() for n in e.getOutgoing().keys() if n.getID() in valid_edge_ids}
-        in_neighbors[eid] = {n.getID() for n in e.getIncoming().keys() if n.getID() in valid_edge_ids}
+    out_neighbors, in_neighbors = _edge_neighbors(state, valid_edge_ids)
 
     def _fixed_point(neighbors: dict[str, set[str]]) -> set[str]:
         keep = set(neighbors)
@@ -658,6 +763,20 @@ def _eligible_edge_ids(state: PipelineState, valid_edge_ids: set[str]) -> tuple[
     return start_ids, end_ids
 
 
+def _edge_neighbors(state: PipelineState, valid_edge_ids: set[str]) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    if state.sumo_net is None:
+        raise ValueError("state.sumo_net must be available before step 8.")
+    out_neighbors: dict[str, set[str]] = {}
+    in_neighbors: dict[str, set[str]] = {}
+    for e in state.sumo_net.getEdges(withInternal=False):
+        eid = e.getID()
+        if eid not in valid_edge_ids:
+            continue
+        out_neighbors[eid] = {n.getID() for n in e.getOutgoing().keys() if n.getID() in valid_edge_ids}
+        in_neighbors[eid] = {n.getID() for n in e.getIncoming().keys() if n.getID() in valid_edge_ids}
+    return out_neighbors, in_neighbors
+
+
 def _match_sumo_edges_deps(state: PipelineState):
     deps = [
         file_dep(state.plans_path),
@@ -667,6 +786,7 @@ def _match_sumo_edges_deps(state: PipelineState):
         file_dep(state.network_path),
         file_dep(state.boundary_path),
         file_dep(state.sumo_network_path),
+        file_dep(state.scaled_trips_path),
         param_dep("modes_keep", tuple(state.config["modes_keep"])),
         param_dep("network_crs", state.config.get("network_crs", "EPSG:2056")),
         param_dep("scale_factor", float(state.config["scale_factor"])),
@@ -683,6 +803,7 @@ def _match_sumo_edges_deps(state: PipelineState):
         param_dep("sumo_match_route_sequence_max_radius_m", state.config.get("sumo_match_route_sequence_max_radius_m")),
         param_dep("sumo_match_route_sequence_min_dot", float(state.config.get("sumo_match_route_sequence_min_dot", 0.3))),
         param_dep("max_sumo_endpoint_distance_m", state.config.get("max_sumo_endpoint_distance_m")),
+        param_dep("match_sumo_edges_logic_version", MATCH_SUMO_EDGES_LOGIC_VERSION),
     ]
     if state.config["amenity_kdtree_enabled"]:
         deps.append(file_dep(state.config["amenities_path"]))
@@ -698,6 +819,7 @@ def _compute_match_sumo_edges_cached(
     edges = _load_sumo_edges(state)
     link_vectors = _build_link_vectors(state)
     valid_edge_ids = set(edges["edge_id"].astype(str))
+    _, in_neighbors = _edge_neighbors(state, valid_edge_ids)
     start_edge_ids, end_edge_ids = _eligible_edge_ids(state, valid_edge_ids)
     road_type_enabled = bool(state.config.get("sumo_match_road_type_enabled", True))
     fallback_enabled = bool(state.config.get("sumo_match_fallback_enabled", True))
@@ -711,10 +833,19 @@ def _compute_match_sumo_edges_cached(
         _config_float(state.config, "sumo_match_route_sequence_max_radius_m", max_endpoint_distance_m or 150.0)
     )
     route_sequence_min_dot = float(state.config.get("sumo_match_route_sequence_min_dot", 0.3))
-    sumo_road_classes = _build_sumo_road_classes(state, valid_edge_ids)
-    sumo_names = {e.getID(): e.getName() for e in state.sumo_net.getEdges(withInternal=False)}
-    edges["road_class"] = edges["edge_id"].astype(str).map(sumo_road_classes)
-    edges["sumo_name"] = edges["edge_id"].astype(str).map(sumo_names)
+    sumo_edge_metadata = _build_sumo_edge_metadata(state, valid_edge_ids)
+    edges["road_class"] = edges["edge_id"].astype(str).map(
+        {edge_id: meta["road_class"] for edge_id, meta in sumo_edge_metadata.items()}
+    )
+    edges["sumo_name"] = edges["edge_id"].astype(str).map(
+        {edge_id: meta["sumo_name"] for edge_id, meta in sumo_edge_metadata.items()}
+    )
+    edges["from_node"] = edges["edge_id"].astype(str).map(
+        {edge_id: meta["from_node"] for edge_id, meta in sumo_edge_metadata.items()}
+    )
+    edges["to_node"] = edges["edge_id"].astype(str).map(
+        {edge_id: meta["to_node"] for edge_id, meta in sumo_edge_metadata.items()}
+    )
     start_link_col = _reference_link_col(state.scaled_trips, "start")
     end_link_col = _reference_link_col(state.scaled_trips, "end")
     needed_links = pd.concat(
@@ -737,6 +868,7 @@ def _compute_match_sumo_edges_cached(
         link_vectors=link_vectors,
         start_edge_ids=start_edge_ids,
         end_edge_ids=end_edge_ids,
+        in_neighbors=in_neighbors,
         matsim_road_classes=matsim_road_classes,
         matsim_link_metadata=matsim_link_metadata,
         road_type_enabled=road_type_enabled,
@@ -767,17 +899,17 @@ def _log_match_sumo_edges_result(state: PipelineState) -> None:
     print(f"SUMO endpoint distances before guardrail: {_format_distance_diagnostics(state.sumo_endpoint_distance_diagnostics)}")
     max_endpoint_distance_m = _config_float(state.config, "max_sumo_endpoint_distance_m", 150.0)
     if max_endpoint_distance_m is None:
-        print("SUMO endpoint distance guardrail disabled.")
+        print("SUMO endpoint distance guardrail disabled; local activity endpoint guardrail active.")
     elif state.sumo_endpoint_guardrail_dropped_count:
         dropped_by_type = ", ".join(
             f"{key}={value}" for key, value in state.sumo_endpoint_guardrail_dropped_by_type.items()
         )
         print(
-            f"Dropped {state.sumo_endpoint_guardrail_dropped_count} trips beyond "
-            f"{max_endpoint_distance_m:.1f} m SUMO endpoint guardrail ({dropped_by_type})."
+            f"Dropped {state.sumo_endpoint_guardrail_dropped_count} trips by SUMO match guardrails "
+            f"(distance>{max_endpoint_distance_m:.1f}m or local activity fallback; {dropped_by_type})."
         )
     else:
-        print(f"Dropped 0 trips beyond {max_endpoint_distance_m:.1f} m SUMO endpoint guardrail.")
+        print(f"Dropped 0 trips by SUMO match guardrails (distance>{max_endpoint_distance_m:.1f}m or local activity fallback).")
 
 
 def run_match_sumo_edges_stage(state: PipelineState) -> None:

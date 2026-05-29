@@ -15,6 +15,7 @@ AMENITIES_CSV_SEP = ","
 AMENITIES_X_COL = "x"
 AMENITIES_Y_COL = "y"
 AMENITIES_WEIGHT_COL = "weight"
+DEMAND_SCALING_LOGIC_VERSION = 2
 
 
 def _jitter_dep_time(dep_time: pd.Series, jitter_s: int, rng) -> pd.Series:
@@ -132,8 +133,12 @@ def scale_demand(
     _jitter_xy(clones, inside | entering, "end_x", "end_y", coord_radius_m, rng, boundary=boundary, amenities=amenities)
     if network_geo is not None:
         net_geo = network_geo if isinstance(network_geo, gpd.GeoDataFrame) else gpd.GeoDataFrame(network_geo, geometry="geometry")
-        clones["new_start_link"] = _nearest_link_ids(net_geo, clones["start_x"], clones["start_y"]).fillna(clones["new_start_link"])
-        clones["new_end_link"] = _nearest_link_ids(net_geo, clones["end_x"], clones["end_y"]).fillna(clones["new_end_link"])
+        rematch_start = inside | leaving
+        rematch_end = inside | entering
+        start_links = _nearest_link_ids(net_geo, clones.loc[rematch_start, "start_x"], clones.loc[rematch_start, "start_y"])
+        end_links = _nearest_link_ids(net_geo, clones.loc[rematch_end, "end_x"], clones.loc[rematch_end, "end_y"])
+        clones.loc[rematch_start, "new_start_link"] = start_links.fillna(clones.loc[rematch_start, "new_start_link"])
+        clones.loc[rematch_end, "new_end_link"] = end_links.fillna(clones.loc[rematch_end, "new_end_link"])
 
     return pd.concat([originals, clones], ignore_index=True)
 
@@ -153,6 +158,7 @@ def _demand_scaling_deps(state: PipelineState):
         param_dep("coord_jitter_radius_m", float(state.config["coord_jitter_radius_m"])),
         param_dep("demand_scaling_seed", int(state.config["demand_scaling_seed"])),
         param_dep("amenity_kdtree_enabled", bool(state.config["amenity_kdtree_enabled"])),
+        param_dep("demand_scaling_logic_version", DEMAND_SCALING_LOGIC_VERSION),
     ]
     if state.config["amenity_kdtree_enabled"]:
         deps.append(file_dep(state.config["amenities_path"]))

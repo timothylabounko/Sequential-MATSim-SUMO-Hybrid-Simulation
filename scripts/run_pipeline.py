@@ -133,7 +133,7 @@ def main():
         dropped_by_type = ", ".join(
             f"{key}={value}" for key, value in (state.sumo_endpoint_guardrail_dropped_by_type or {}).items()
         )
-        print(f"✔ Dropped {stats['scaled_trips_guardrail_dropped']} trips by SUMO endpoint guardrail ({dropped_by_type})")
+        print(f"✔ Dropped {stats['scaled_trips_guardrail_dropped']} trips by SUMO match guardrails ({dropped_by_type})")
     print(f"✔ Wrote {stats['sumo_trips_xml_rows']} SUMO trips XML rows to {state.sumo_trips_path}")
     if stats["duarouter_ran"]:
         print(f"✔ Wrote {stats['sumo_routes_rows']} routed trips ({stats['sumo_routes_pct']:.2f}%) to {state.sumo_routes_path}")
