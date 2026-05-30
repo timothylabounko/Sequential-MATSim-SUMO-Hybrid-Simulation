@@ -1,4 +1,8 @@
+import os
+import tempfile
 from pathlib import Path
+
+os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "matsim_sumo_matplotlib"))
 
 import geopandas as gpd
 import matplotlib

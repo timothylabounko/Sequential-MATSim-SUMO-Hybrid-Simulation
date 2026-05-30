@@ -4,7 +4,7 @@ import geopandas as gpd
 import pandas as pd
 from shapely.geometry import LineString
 
-from matsim_sumo.demand.scaling import scale_demand
+from matsim_sumo.pipeline.stages.step_07_demand_scaling import scale_demand
 
 
 class DemandScalingTest(unittest.TestCase):

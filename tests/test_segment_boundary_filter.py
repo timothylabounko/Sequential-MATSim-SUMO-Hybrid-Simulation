@@ -3,7 +3,7 @@ import unittest
 import pandas as pd
 from shapely.geometry import box
 
-from matsim_sumo.demand.segment_timing import drop_segments_outside_boundary
+from matsim_sumo.pipeline.stages.step_04_segment_timing import drop_segments_outside_boundary
 
 
 class SegmentBoundaryFilterTest(unittest.TestCase):

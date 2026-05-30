@@ -4,7 +4,7 @@ import geopandas as gpd
 import pandas as pd
 from shapely.geometry import LineString
 
-from matsim_sumo.matching.matcher import _apply_endpoint_distance_guardrail, _match_trips
+from matsim_sumo.pipeline.stages.step_08_match_sumo_edges import _apply_endpoint_distance_guardrail, _match_trips
 
 
 class SumoEndpointGuardrailTest(unittest.TestCase):

@@ -41,6 +41,8 @@ def _run_pipeline(argv: Sequence[str]) -> int:
         return 0
     args = parser.parse_args(argv)
 
+    os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "matplotlib"))
+
     from matsim_sumo.config.loader import load_config, write_config_copy
     from matsim_sumo.io.csv_writer import CsvWriter
     from matsim_sumo.pipeline.runner import build_pipeline_state, run_pipeline_steps

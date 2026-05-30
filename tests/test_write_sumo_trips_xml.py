@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from matsim_sumo.io.sumo_trips_xml import write_sumo_trips_xml
+from matsim_sumo.pipeline.stages.step_09_write_sumo_trips import write_sumo_trips_xml
 
 
 class WriteSumoTripsXmlTest(unittest.TestCase):
