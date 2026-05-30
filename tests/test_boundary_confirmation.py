@@ -1,4 +1,3 @@
-import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -9,10 +8,7 @@ from unittest.mock import patch
 import geopandas as gpd
 from shapely.geometry import LineString, Polygon
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-
-from matsim_sumo.plot.boundary_confirmation import (
+from matsim_sumo.visualization.boundary import (
     BOUNDARY_DECLINED_MESSAGE,
     confirm_boundary_preview,
 )
@@ -45,7 +41,7 @@ class BoundaryConfirmationTest(unittest.TestCase):
             _write_boundary(boundary_path)
 
             with patch("builtins.input", return_value="yes"), patch(
-                "matsim_sumo.plot.boundary_confirmation.webbrowser.open", return_value=True
+                "matsim_sumo.visualization.boundary.webbrowser.open", return_value=True
             ) as open_mock:
                 with redirect_stdout(StringIO()):
                     plot_path = confirm_boundary_preview(_sumo_geo(), boundary_path, tmp_path / "output")
@@ -61,7 +57,7 @@ class BoundaryConfirmationTest(unittest.TestCase):
             _write_boundary(boundary_path)
 
             with patch("builtins.input", return_value="n"), patch(
-                "matsim_sumo.plot.boundary_confirmation.webbrowser.open", return_value=True
+                "matsim_sumo.visualization.boundary.webbrowser.open", return_value=True
             ):
                 with self.assertRaises(SystemExit) as ctx:
                     with redirect_stdout(StringIO()):

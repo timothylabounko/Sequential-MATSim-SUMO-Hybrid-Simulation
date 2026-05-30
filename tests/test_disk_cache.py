@@ -1,15 +1,11 @@
 import io
 import os
-import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-
-from matsim_sumo.disk_cache import disk_cache, file_dep, output_needs_refresh, param_dep
+from matsim_sumo.utils.cache import disk_cache, file_dep, output_needs_refresh, param_dep
 
 
 class DiskCacheTest(unittest.TestCase):

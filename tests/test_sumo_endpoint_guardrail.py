@@ -1,14 +1,10 @@
-import sys
 import unittest
-from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
 from shapely.geometry import LineString
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-from matsim_sumo.steps.step_8_match_sumo_edges_simple import _apply_endpoint_distance_guardrail, _match_trips
+from matsim_sumo.matching.matcher import _apply_endpoint_distance_guardrail, _match_trips
 
 
 class SumoEndpointGuardrailTest(unittest.TestCase):

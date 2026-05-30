@@ -1,13 +1,9 @@
 import csv
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-
-from matsim_sumo.steps.step_9_write_sumo_trips_xml import write_sumo_trips_xml
+from matsim_sumo.io.sumo_trips_xml import write_sumo_trips_xml
 
 
 class WriteSumoTripsXmlTest(unittest.TestCase):

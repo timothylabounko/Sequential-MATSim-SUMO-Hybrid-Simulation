@@ -1,13 +1,9 @@
-import sys
 import unittest
-from pathlib import Path
 
 import geopandas as gpd
 from shapely.geometry import LineString, box
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-from matsim_sumo.steps.step_1_boundary_cut_links import compute_cut_link_ids_from_geo
+from matsim_sumo.pipeline.stages.step_01_boundary_cut_links import compute_cut_link_ids_from_geo
 
 
 class BoundaryCutLinksTest(unittest.TestCase):

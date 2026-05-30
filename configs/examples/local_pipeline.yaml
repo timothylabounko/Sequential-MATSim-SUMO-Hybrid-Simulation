@@ -1,0 +1,50 @@
+# Local example copied from the existing Zurich Bahnhof run settings.
+
+matsim_output_dir: data/matsim_output_50pct
+plans_file: output_plans.xml.gz
+trips_file: output_trips.csv.gz
+events_file: output_events.xml.gz
+network_file: output_network.xml.gz
+
+sumo_input_dir: data/zuerich_bahnhof_scenario
+sumo_network_path: zuerich_bahnhof.net.xml
+
+modes_keep:
+  - car
+boundary_file: data/boundaries/zurich_bahnhof_boundary_tight5.geojson
+boundary_force_rebuild: false
+sumo_boundary_network_buffer_m: 35.0
+sumo_boundary_gap_close_m: 150.0
+sumo_boundary_inward_buffer_m: 30.0
+sumo_boundary_simplify_m: 40.0
+sumo_boundary_outward_buffer_m: 5.0
+segment_endpoint_boundary_tolerance_m: 1.0
+
+scale_factor: 2.0
+dep_time_jitter_seconds: 3600
+coord_jitter_radius_m: 500.0
+demand_scaling_seed: 35
+amenity_kdtree_enabled: true
+amenities_path: data/Amenities_Location/locations.csv
+
+sumo_network_lv95_tmp_file: data/tmp/0_sumo_network_zuerich_bahnhof_lv95.geojson
+sumo_vclass_map:
+  car: passenger
+sumo_match_road_type_enabled: true
+sumo_match_same_type_max_radius_m: 150.0
+sumo_match_fallback_enabled: true
+sumo_match_fallback_max_radius_m: 150.0
+sumo_match_route_sequence_enabled: true
+sumo_match_route_sequence_max_radius_m: 150.0
+sumo_match_route_sequence_min_dot: 0.3
+max_sumo_endpoint_distance_m: 150.0
+
+run_duarouter: false
+duarouter_bin: /Users/Matteo/Documents/0_ETH/0_Master_Thesis/2_SUMO_Simulation/sumo-env/bin/duarouter
+sumo_routes_file: 10_sumo_routes.rou.xml
+sumo_unrouted_trips_file: 10_unrouted_trips.xml
+duarouter_log_file: 10_duarouter.log
+
+output_dir: results/run_32_zuerich_bahnhof
+write_intermediates: false
+write_review_csv: false

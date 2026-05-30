@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "matsim-sumo-pipeline"
+version = "0.1.0"
+description = "Pipeline to convert MATSim outputs into SUMO simulation inputs."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+dependencies = [
+    "lxml",
+    "pandas",
+    "geopandas",
+    "pyogrio",
+    "pyyaml",
+    "tqdm",
+    "shapely",
+    "pyproj",
+    "matplotlib",
+    "matsim-tools",
+    "numpy",
+    "scipy",
+    "sumolib",
+    "rtree",
+    "pandana",
+    "osmnx",
+    "networkx",
+]
+
+[project.scripts]
+matsim-sumo = "matsim_sumo.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+matsim_sumo = ["resources/shell/*.sh"]

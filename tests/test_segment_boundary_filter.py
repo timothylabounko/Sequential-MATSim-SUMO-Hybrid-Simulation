@@ -1,13 +1,9 @@
-import sys
 import unittest
-from pathlib import Path
 
 import pandas as pd
 from shapely.geometry import box
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-from matsim_sumo.steps.step_4_segment_timing import drop_segments_outside_boundary
+from matsim_sumo.demand.segment_timing import drop_segments_outside_boundary
 
 
 class SegmentBoundaryFilterTest(unittest.TestCase):

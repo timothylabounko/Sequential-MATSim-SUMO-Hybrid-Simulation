@@ -1,14 +1,10 @@
-import sys
 import unittest
-from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
 from shapely.geometry import LineString
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-from matsim_sumo.steps.step_7_demand_scaling import scale_demand
+from matsim_sumo.demand.scaling import scale_demand
 
 
 class DemandScalingTest(unittest.TestCase):

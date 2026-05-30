@@ -1,13 +1,9 @@
-import sys
 import unittest
-from pathlib import Path
 
 import geopandas as gpd
 from shapely.geometry import LineString, Point
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-from matsim_sumo.network_preprocessing.sumo_boundary import build_sumo_boundary
+from matsim_sumo.network.sumo_boundary import build_sumo_boundary
 
 
 def _gdf(lines: list[LineString]) -> gpd.GeoDataFrame:
