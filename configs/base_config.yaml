@@ -2,20 +2,20 @@
 # Copy this file or configs/templates/pipeline.yaml and edit paths for a new run
 
 # MATSim input
-matsim_output_dir: data/inputs/matsim
+matsim_output_dir: data/inputs_example/matsim
 plans_file: output_plans.xml.gz
 trips_file: output_trips.csv.gz
 events_file: output_events.xml.gz
 network_file: output_network.xml.gz
 
 # SUMO input
-sumo_input_dir: data/inputs/sumo
-sumo_network_path: VMOD.net.xml
+sumo_input_dir: data/inputs_example/sumo
+sumo_network_path: network.net.xml
 
 # Step 0: initialization
 modes_keep:
   - car
-boundary_file: data/generated/boundaries/transcality_boundary.geojson
+boundary_file: data/generated/boundaries/sumo_boundary.geojson
 boundary_force_rebuild: false
 sumo_boundary_network_buffer_m: 35.0
 sumo_boundary_gap_close_m: 150.0
@@ -32,10 +32,10 @@ dep_time_jitter_seconds: 3600 # +/- 1 hour
 coord_jitter_radius_m: 500.0
 demand_scaling_seed: 35
 amenity_kdtree_enabled: true
-amenities_path: data/inputs/amenities/locations.csv
+amenities_path: data/inputs_example/amenities/locations.csv
 
 # Step 3: map-matching
-sumo_network_lv95_tmp_file: data/generated/sumo_network_lv95/transcality_lv95.geojson
+sumo_network_lv95_tmp_file: data/generated/sumo_network_lv95/sumo_lv95.geojson
 sumo_vclass_map:
   car: passenger
 sumo_match_road_type_enabled: true
@@ -55,6 +55,6 @@ sumo_unrouted_trips_file: 4_2_unrouted_trips.xml
 duarouter_log_file: 4_2_duarouter.log
 
 # Output
-output_dir: results/run_33_transcality_50pct
+output_dir: results/run_34_test
 write_intermediates: false
 write_review_csv: false
