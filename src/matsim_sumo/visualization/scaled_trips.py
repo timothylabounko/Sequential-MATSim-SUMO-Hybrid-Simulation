@@ -101,8 +101,8 @@ def run_scaled_trips_plot_stage(state: PipelineState) -> None:
     out_dir = Path(state.output_dir) / "plots"
     out_dir.mkdir(parents=True, exist_ok=True)
     for name in (
-        "6_unscaled_trips_start_end_sumo_network.png",
-        "7_scaled_trips_start_end_sumo_network.png",
+        "1_6_unscaled_trips_start_end_sumo_network.png",
+        "2_scaled_trips_start_end_sumo_network.png",
     ):
         p = out_dir / name
         if p.exists():
@@ -118,12 +118,12 @@ def run_scaled_trips_plot_stage(state: PipelineState) -> None:
         (
             state.combined_trips,
             "Unscaled Trips Start and End Points with Boundary and SUMO Network",
-            "6_unscaled_trips_start_end_boundary_sumo_network.png",
+            "1_6_unscaled_trips_start_end_boundary_sumo_network.png",
         ),
         (
             state.scaled_trips,
             "Scaled Trips Start and End Points with Boundary and SUMO Network",
-            "7_scaled_trips_start_end_boundary_sumo_network.png",
+            "2_scaled_trips_start_end_boundary_sumo_network.png",
         ),
     )
     for df, title, name in specs:

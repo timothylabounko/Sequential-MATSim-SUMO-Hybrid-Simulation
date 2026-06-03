@@ -111,8 +111,8 @@ def run_duarouter_stage(state: PipelineState) -> None:
     state.sumo_unrouted_count = unrouted
     state.sumo_unrouted_pct = unrouted_pct
     sample_pct = (100.0 * total / total_all) if total_all else 0.0
-    print(f"INFO Step 10 sampled {total}/{total_all} trips ({sample_pct:.2f}%).")
-    print(f"INFO Step 10 duarouter routed {routed}/{total} trips ({pct:.2f}%).")
-    print(f"INFO Step 10 duarouter unrouted {unrouted}/{total} trips ({unrouted_pct:.2f}%).")
-    print(f"INFO Step 10 duarouter log: {state.duarouter_log_path}")
-    print(f"INFO Step 10 unrouted trips XML: {state.sumo_unrouted_trips_path}")
+    print(f"INFO Step 4.2 sampled {total}/{total_all} trips ({sample_pct:.2f}%).")
+    print(f"INFO Step 4.2 duarouter routed {routed}/{total} trips ({pct:.2f}%).")
+    print(f"INFO Step 4.2 duarouter unrouted {unrouted}/{total} trips ({unrouted_pct:.2f}%).")
+    print(f"INFO Step 4.2 duarouter log: {state.duarouter_log_path}")
+    print(f"INFO Step 4.2 unrouted trips XML: {state.sumo_unrouted_trips_path}")

@@ -141,7 +141,7 @@ def _plot_removed_counts(summary: pd.DataFrame, out_path: Path) -> None:
     ax.plot(x, summary["end_removed"], marker="s", color="#d62728", label="End removed")
     ax.set_xticks(list(x), summary["method"].tolist(), rotation=0)
     ax.set_ylabel("Removed edges")
-    ax.set_title("Step 8 eligible-edge pruning by method")
+    ax.set_title("Step 3 eligible-edge pruning by method")
     ax.grid(axis="y", alpha=0.3)
     ax.legend()
     fig.savefig(out_path, dpi=220, bbox_inches="tight")
@@ -149,7 +149,7 @@ def _plot_removed_counts(summary: pd.DataFrame, out_path: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Plot Step 8 start/end edge networks and their differences.")
+    parser = argparse.ArgumentParser(description="Plot Step 3 start/end edge networks and their differences.")
     parser.add_argument(
         "--sumo-net",
         default="data/sumo_scenario/Zurich_Scenario_Transcality/VMOD.net.xml",
@@ -192,8 +192,8 @@ def main() -> None:
         counts = _plot_categories(
             edges,
             edge_to_category,
-            title=f"Step 8 edge roles at connection depth {depth}",
-            out_path=out_dir / f"step8_edge_roles_depth_{depth}.png",
+            title=f"Step 3 edge roles at connection depth {depth}",
+            out_path=out_dir / f"step3_edge_roles_depth_{depth}.png",
         )
         rows.append(
             {
@@ -220,8 +220,8 @@ def main() -> None:
     counts_fp = _plot_categories(
         edges,
         edge_to_category_fp,
-        title="Step 8 edge roles at fixed-point prune",
-        out_path=out_dir / "step8_edge_roles_fixed_point.png",
+        title="Step 3 edge roles at fixed-point prune",
+        out_path=out_dir / "step3_edge_roles_fixed_point.png",
     )
     rows.append(
         {
@@ -243,12 +243,12 @@ def main() -> None:
     )
 
     summary = pd.DataFrame(rows)
-    summary.to_csv(out_dir / "step8_edge_roles_summary.csv", index=False)
-    _plot_removed_counts(summary, out_dir / "step8_removed_edges_summary.png")
+    summary.to_csv(out_dir / "step3_edge_roles_summary.csv", index=False)
+    _plot_removed_counts(summary, out_dir / "step3_removed_edges_summary.png")
 
     print(f"Total valid edges: {n_total}")
-    print(f"Wrote summary CSV: {out_dir / 'step8_edge_roles_summary.csv'}")
-    print(f"Wrote removed-count plot: {out_dir / 'step8_removed_edges_summary.png'}")
+    print(f"Wrote summary CSV: {out_dir / 'step3_edge_roles_summary.csv'}")
+    print(f"Wrote removed-count plot: {out_dir / 'step3_removed_edges_summary.png'}")
     print(f"Wrote role maps for depths {depths} and fixed_point in: {out_dir}")
 
 

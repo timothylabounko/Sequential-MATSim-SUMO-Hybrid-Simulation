@@ -3,7 +3,7 @@ import unittest
 import geopandas as gpd
 from shapely.geometry import LineString, box
 
-from matsim_sumo.pipeline.stages.step_01_boundary_cut_links import compute_cut_link_ids_from_geo
+from matsim_sumo.pipeline.stages.step_1_1_boundary_cut_links import compute_cut_link_ids_from_geo
 
 
 class BoundaryCutLinksTest(unittest.TestCase):

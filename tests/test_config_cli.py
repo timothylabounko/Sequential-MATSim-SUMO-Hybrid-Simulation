@@ -14,7 +14,7 @@ from matsim_sumo.pipeline.runner import build_pipeline_state, resolve_sumo_netwo
 def _minimal_config() -> dict:
     return {
         "matsim_output_dir": "data/inputs/matsim",
-        "boundary_file": "data/inputs/boundaries/boundary.geojson",
+        "boundary_file": "data/generated/boundaries/test_boundary.geojson",
         "network_file": "output_network.xml.gz",
         "plans_file": "output_plans.xml.gz",
         "trips_file": "output_trips.csv.gz",
@@ -35,9 +35,9 @@ def _minimal_config() -> dict:
         "sumo_vclass_map": {"car": "passenger"},
         "run_duarouter": False,
         "duarouter_bin": "duarouter",
-        "sumo_routes_file": "10_sumo_routes.rou.xml",
-        "sumo_unrouted_trips_file": "10_unrouted_trips.xml",
-        "duarouter_log_file": "10_duarouter.log",
+        "sumo_routes_file": "4_2_sumo_routes.rou.xml",
+        "sumo_unrouted_trips_file": "4_2_unrouted_trips.xml",
+        "duarouter_log_file": "4_2_duarouter.log",
     }
 
 
@@ -59,6 +59,9 @@ class ConfigCliTest(unittest.TestCase):
 
         self.assertEqual(state.network_path, Path("data/inputs/matsim/output_network.xml.gz"))
         self.assertEqual(resolve_sumo_network_path(cfg), Path("data/inputs/sumo/scenario.net.xml"))
+        self.assertEqual(state.scaled_trips_path, Path("results/test/2_scaled_trips.csv.gz"))
+        self.assertEqual(state.scaled_trips_matched_path, Path("results/test/3_matched_trips.csv.gz"))
+        self.assertEqual(state.sumo_trips_path, Path("results/test/4_1_sumo_trips.xml"))
 
     def test_run_help_is_available(self) -> None:
         out = StringIO()

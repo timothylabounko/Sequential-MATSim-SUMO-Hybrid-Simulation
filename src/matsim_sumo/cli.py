@@ -1,3 +1,4 @@
+# Command Line Interface for MATSim-SUMO conversion pipeline and utilities.
 from __future__ import annotations
 
 import argparse

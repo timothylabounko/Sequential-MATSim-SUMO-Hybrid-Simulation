@@ -3,20 +3,18 @@ from time import perf_counter
 
 from matsim_sumo.config.defaults import default_extract_events_script_path
 from matsim_sumo.pipeline.state import PipelineState
-from matsim_sumo.pipeline.stages.step_00_prepare_sumo_network import (
-    run_sumo_boundary_stage,
-    run_sumo_network_preprocessing_stage,
-)
-from matsim_sumo.pipeline.stages.step_01_boundary_cut_links import run_boundary_cut_links_stage
-from matsim_sumo.pipeline.stages.step_02_plans_car_legs import run_plans_car_legs_stage
-from matsim_sumo.pipeline.stages.step_03_crossing_segments import run_crossing_segments_stage
-from matsim_sumo.pipeline.stages.step_04_segment_timing import run_segment_timing_stage
-from matsim_sumo.pipeline.stages.step_05_inside_trip_filter import run_inside_trip_filter_stage
-from matsim_sumo.pipeline.stages.step_06_combine_trips import run_combine_trips_stage
-from matsim_sumo.pipeline.stages.step_07_demand_scaling import run_demand_scaling_stage
-from matsim_sumo.pipeline.stages.step_08_match_sumo_edges import run_match_sumo_edges_stage
-from matsim_sumo.pipeline.stages.step_09_write_sumo_trips import run_write_sumo_trips_xml_stage
-from matsim_sumo.pipeline.stages.step_10_duarouter import run_duarouter_stage
+from matsim_sumo.pipeline.stages.step_0_1_prepare_sumo_network import run_sumo_network_preprocessing_stage
+from matsim_sumo.pipeline.stages.step_0_2_generate_boundary import run_sumo_boundary_stage
+from matsim_sumo.pipeline.stages.step_1_1_boundary_cut_links import run_boundary_cut_links_stage
+from matsim_sumo.pipeline.stages.step_1_2_extract_car_legs import run_plans_car_legs_stage
+from matsim_sumo.pipeline.stages.step_1_3_crossing_segments import run_crossing_segments_stage
+from matsim_sumo.pipeline.stages.step_1_4_segment_timing import run_segment_timing_stage
+from matsim_sumo.pipeline.stages.step_1_5_inside_trip_filter import run_inside_trip_filter_stage
+from matsim_sumo.pipeline.stages.step_1_6_combine_filtered_trips import run_combine_trips_stage
+from matsim_sumo.pipeline.stages.step_2_demand_scaling import run_demand_scaling_stage
+from matsim_sumo.pipeline.stages.step_3_map_matching import run_match_sumo_edges_stage
+from matsim_sumo.pipeline.stages.step_4_1_write_sumo_trips import run_write_sumo_trips_xml_stage
+from matsim_sumo.pipeline.stages.step_4_2_duarouter import run_duarouter_stage
 from matsim_sumo.visualization.boundary import confirm_boundary_preview
 
 
@@ -41,26 +39,26 @@ def build_pipeline_state(config: dict) -> PipelineState:
         trips_path=matsim_output_dir / config["trips_file"],
         events_path=matsim_output_dir / config["events_file"],
         extract_events_script_path=Path(config.get("extract_events_script") or default_extract_events_script_path()),
-        cut_links_csv_path=Path(config.get("cut_links_csv", output_dir / "1_cut_links.csv")),
+        cut_links_csv_path=Path(config.get("cut_links_csv", output_dir / "1_1_cut_links.csv")),
         events_cut_csv_path=output_dir / config.get(
             "events_cut_file",
-            "4_output_events_link_events_car_truck_cut.csv",
+            "1_4_output_events_link_events_car_truck_cut.csv",
         ),
-        car_legs_path=output_dir / config.get("car_legs_file", "2_car_legs.csv.gz"),
-        car_legs_cut_path=output_dir / config.get("car_legs_cut_file", "3_car_legs_cut.csv.gz"),
-        crossing_segments_path=output_dir / config.get("crossing_segments_file", "3_crossing_segments.csv.gz"),
+        car_legs_path=output_dir / config.get("car_legs_file", "1_2_car_legs.csv.gz"),
+        car_legs_cut_path=output_dir / config.get("car_legs_cut_file", "1_3_car_legs_cut.csv.gz"),
+        crossing_segments_path=output_dir / config.get("crossing_segments_file", "1_3_crossing_segments.csv.gz"),
         crossing_segments_timed_path=output_dir / config.get(
             "crossing_segments_timed_file",
-            "4_crossing_segments_timed.csv.gz",
+            "1_4_crossing_segments_timed.csv.gz",
         ),
-        trips_inside_path=output_dir / config.get("inside_trips_file", "5_trips_inside.csv.gz"),
-        combined_trips_path=output_dir / config.get("combined_trips_file", "6_combined_trips.csv.gz"),
-        scaled_trips_path=output_dir / config.get("scaled_trips_file", "7_scaled_trips.csv.gz"),
+        trips_inside_path=output_dir / config.get("inside_trips_file", "1_5_trips_inside.csv.gz"),
+        combined_trips_path=output_dir / config.get("combined_trips_file", "1_6_combined_trips.csv.gz"),
+        scaled_trips_path=output_dir / config.get("scaled_trips_file", "2_scaled_trips.csv.gz"),
         sumo_network_path=resolve_sumo_network_path(config),
         sumo_network_lv95_path=Path(config["sumo_network_lv95_tmp_file"]),
         scaled_trips_matched_path=output_dir
-        / config.get("scaled_trips_matched_file", "8_scaled_trips_matched.csv.gz"),
-        sumo_trips_path=output_dir / config.get("sumo_trips_file", "9_sumo_trips.xml"),
+        / config.get("scaled_trips_matched_file", "3_matched_trips.csv.gz"),
+        sumo_trips_path=output_dir / config.get("sumo_trips_file", "4_1_sumo_trips.xml"),
         sumo_routes_path=output_dir / config["sumo_routes_file"],
         sumo_unrouted_trips_path=output_dir / config["sumo_unrouted_trips_file"],
         duarouter_log_path=output_dir / config["duarouter_log_file"],
@@ -76,30 +74,30 @@ def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
     network_crs = state.config.get("network_crs", "EPSG:2056")
     vclasses = tuple(dict.fromkeys(state.config["sumo_vclass_map"].values()))
 
-    _run_step("Step 0 SUMO network preprocessing", lambda: run_sumo_network_preprocessing_stage(state, vclasses))
-    _run_step("Step 0 SUMO boundary", lambda: run_sumo_boundary_stage(state, vclasses))
+    _run_step("Step 0.1 prepare SUMO network", lambda: run_sumo_network_preprocessing_stage(state, vclasses))
+    _run_step("Step 0.2 generate SUMO boundary", lambda: run_sumo_boundary_stage(state, vclasses))
     _run_step(
-        "Step 0 boundary confirmation",
+        "Step 0.3 confirm generated boundary",
         lambda: confirm_boundary_preview(state.sumo_network_geo, state.boundary_path, state.output_dir),
     )
-    _run_step("Step 1 boundary cut links", lambda: run_boundary_cut_links_stage(state, projection=network_crs))
-    _run_step("Step 2 plans car legs", lambda: run_plans_car_legs_stage(state))
-    _run_step("Step 3 crossing segments", lambda: run_crossing_segments_stage(state))
+    _run_step("Step 1.1 boundary cut links", lambda: run_boundary_cut_links_stage(state, projection=network_crs))
+    _run_step("Step 1.2 extract MATSim car legs", lambda: run_plans_car_legs_stage(state))
+    _run_step("Step 1.3 crossing segments", lambda: run_crossing_segments_stage(state))
 
     missing_before = int(state.crossing_segments["dep_time"].isna().sum())
-    _run_step("Step 4 segment timing", lambda: run_segment_timing_stage(state))
+    _run_step("Step 1.4 segment timing", lambda: run_segment_timing_stage(state))
     missing_after = int(state.crossing_segments_timed["dep_time"].isna().sum())
 
-    _run_step("Step 5 inside trip filter", lambda: run_inside_trip_filter_stage(state))
-    _run_step("Step 6 combine trips", lambda: run_combine_trips_stage(state))
-    _run_step("Step 7 demand scaling", lambda: run_demand_scaling_stage(state))
-    _run_step("Step 8 match SUMO edges", lambda: run_match_sumo_edges_stage(state))
-    _run_step("Step 9 write SUMO trips XML", lambda: run_write_sumo_trips_xml_stage(state))
+    _run_step("Step 1.5 inside trip filter", lambda: run_inside_trip_filter_stage(state))
+    _run_step("Step 1.6 combine filtered trips", lambda: run_combine_trips_stage(state))
+    _run_step("Step 2 demand scaling", lambda: run_demand_scaling_stage(state))
+    _run_step("Step 3 map-matching", lambda: run_match_sumo_edges_stage(state))
+    _run_step("Step 4.1 write SUMO trips XML", lambda: run_write_sumo_trips_xml_stage(state))
     duarouter_ran = bool(state.config["run_duarouter"])
     if duarouter_ran:
-        _run_step("Step 10 duarouter routing", lambda: run_duarouter_stage(state))
+        _run_step("Step 4.2 duarouter routing", lambda: run_duarouter_stage(state))
     else:
-        print("✔ Step 10 duarouter routing skipped (run_duarouter: false)")
+        print("✔ Step 4.2 duarouter routing skipped (run_duarouter: false)")
 
     return {
         "cut_links": len(state.cut_link_ids),

@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 
 
 BOUNDARY_CONFIRMATION_FILENAME = "sumo_network_boundary_confirmation.png"
-BOUNDARY_DECLINED_MESSAGE = "Boundary confirmation declined; pipeline stopped before Step 1."
+BOUNDARY_DECLINED_MESSAGE = "Boundary confirmation declined; pipeline stopped before Step 1 demand filtering."
 
 
 def _read_boundary(boundary_path: Path) -> gpd.GeoDataFrame:

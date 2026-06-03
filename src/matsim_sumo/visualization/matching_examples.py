@@ -107,14 +107,14 @@ def plot_map_matching_examples(cfg: dict, out_dir: Path, n: int = 3, seed: int =
     start_edges = sumo_geo[sumo_geo["edge_id"].isin(start_ids)].copy()
     end_edges = sumo_geo[sumo_geo["edge_id"].isin(end_ids)].copy()
 
-    matched_path = PROJECT_ROOT / cfg["output_dir"] / cfg.get("scaled_trips_matched_file", "8_scaled_trips_matched.csv.gz")
+    matched_path = PROJECT_ROOT / cfg["output_dir"] / cfg.get("scaled_trips_matched_file", "3_matched_trips.csv.gz")
     trips = pd.read_csv(matched_path, sep=";", low_memory=False)
     start_pts = _sample_points(trips, "start_x", "start_y", "from_edge", n=n, seed=seed)
     end_pts = _sample_points(trips, "end_x", "end_y", "to_edge", n=n, seed=seed + 1)
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_start = out_dir / "8_map_matching_start_examples.png"
-    out_end = out_dir / "8_map_matching_end_examples.png"
+    out_start = out_dir / "3_map_matching_start_examples.png"
+    out_end = out_dir / "3_map_matching_end_examples.png"
     _plot_examples(
         start_edges,
         boundary,
@@ -135,7 +135,7 @@ def plot_map_matching_examples(cfg: dict, out_dir: Path, n: int = 3, seed: int =
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Plot Step 8 map-matching examples (start/end).")
+    parser = argparse.ArgumentParser(description="Plot Step 3 map-matching examples (start/end).")
     parser.add_argument("--config", default="configs/base_config.yaml", help="Pipeline config YAML path")
     parser.add_argument("--out-dir", default="", help="Output directory (default: <config.output_dir>/plots)")
     parser.add_argument("--n", type=int, default=3, help="Number of random points per plot")
