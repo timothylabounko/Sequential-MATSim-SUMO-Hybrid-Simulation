@@ -116,7 +116,7 @@ class SumoEndpointGuardrailTest(unittest.TestCase):
         self.assertEqual(matched.iloc[0]["from_route_match_link"], "2292149")
         self.assertEqual(matched.iloc[0]["to_edge"], "536676266#3")
 
-    def test_entering_trip_uses_reachable_destination_candidate(self) -> None:
+    def test_entering_trip_matches_destination_only_from_reachable_edges(self) -> None:
         trips = pd.DataFrame(
             {
                 "start_x": [0.0],
@@ -166,10 +166,9 @@ class SumoEndpointGuardrailTest(unittest.TestCase):
 
         self.assertEqual(matched.iloc[0]["from_edge"], "start")
         self.assertEqual(matched.iloc[0]["to_edge"], "good_end")
-        self.assertTrue(bool(matched.iloc[0]["sumo_endpoint_routeable"]))
         self.assertTrue(bool(matched.iloc[0]["match_ok"]))
 
-    def test_leaving_trip_uses_reachable_start_candidate(self) -> None:
+    def test_leaving_trip_matches_start_only_from_edges_reaching_destination(self) -> None:
         trips = pd.DataFrame(
             {
                 "start_x": [0.0],
@@ -219,10 +218,9 @@ class SumoEndpointGuardrailTest(unittest.TestCase):
 
         self.assertEqual(matched.iloc[0]["from_edge"], "good_start")
         self.assertEqual(matched.iloc[0]["to_edge"], "end")
-        self.assertTrue(bool(matched.iloc[0]["sumo_endpoint_routeable"]))
         self.assertTrue(bool(matched.iloc[0]["match_ok"]))
 
-    def test_inside_trip_uses_reachable_endpoint_pair(self) -> None:
+    def test_inside_trip_matches_destination_only_from_reachable_edges(self) -> None:
         trips = pd.DataFrame(
             {
                 "start_x": [0.0],
@@ -237,15 +235,14 @@ class SumoEndpointGuardrailTest(unittest.TestCase):
         )
         edges = gpd.GeoDataFrame(
             {
-                "edge_id": ["bad_start", "good_start", "bad_end", "good_end"],
-                "road_class": ["residential", "residential", "residential", "residential"],
-                "sumo_name": ["", "", "", ""],
-                "from_node": ["x", "a", "u", "b"],
-                "to_node": ["y", "b", "v", "c"],
+                "edge_id": ["start", "bad_end", "good_end"],
+                "road_class": ["residential", "residential", "residential"],
+                "sumo_name": ["", "", ""],
+                "from_node": ["a", "x", "b"],
+                "to_node": ["b", "y", "c"],
             },
             geometry=[
                 LineString([(0.0, 0.0), (1.0, 0.0)]),
-                LineString([(2.0, 0.0), (3.0, 0.0)]),
                 LineString([(10.0, 0.0), (11.0, 0.0)]),
                 LineString([(12.0, 0.0), (13.0, 0.0)]),
             ],
@@ -256,10 +253,10 @@ class SumoEndpointGuardrailTest(unittest.TestCase):
             trips,
             edges=edges,
             link_vectors={"start_link": (1.0, 0.0), "end_link": (1.0, 0.0)},
-            start_edge_ids={"bad_start", "good_start"},
+            start_edge_ids={"start"},
             end_edge_ids={"bad_end", "good_end"},
-            out_neighbors={"bad_start": set(), "good_start": {"good_end"}, "bad_end": set(), "good_end": set()},
-            in_neighbors={"bad_start": set(), "good_start": set(), "bad_end": set(), "good_end": {"good_start"}},
+            out_neighbors={"start": {"good_end"}, "bad_end": set(), "good_end": set()},
+            in_neighbors={"start": set(), "bad_end": set(), "good_end": {"start"}},
             matsim_road_classes={"start_link": "residential", "end_link": "residential"},
             matsim_link_metadata={},
             road_type_enabled=True,
@@ -271,28 +268,60 @@ class SumoEndpointGuardrailTest(unittest.TestCase):
             route_sequence_min_dot=0.3,
         )
 
-        self.assertEqual(matched.iloc[0]["from_edge"], "good_start")
+        self.assertEqual(matched.iloc[0]["from_edge"], "start")
         self.assertEqual(matched.iloc[0]["to_edge"], "good_end")
-        self.assertTrue(bool(matched.iloc[0]["sumo_endpoint_routeable"]))
         self.assertTrue(bool(matched.iloc[0]["match_ok"]))
 
-    def test_guardrail_drops_unrouteable_matched_pair(self) -> None:
-        matched = pd.DataFrame(
+    def test_routeable_endpoint_match_leaves_trip_unmatched_when_no_candidate_exists(self) -> None:
+        trips = pd.DataFrame(
             {
-                "from_edge": ["a"],
-                "to_edge": ["b"],
-                "from_edge_dist_m": [10.0],
-                "to_edge_dist_m": [10.0],
-                "crossing_type": ["inside"],
-                "sumo_endpoint_routeable": [False],
+                "start_x": [0.0],
+                "start_y": [0.0],
+                "end_x": [10.0],
+                "end_y": [0.0],
+                "crossing_type": ["entering"],
+                "route_links": [""],
+                "new_start_link": ["start_link"],
+                "new_end_link": ["end_link"],
             }
         )
+        edges = gpd.GeoDataFrame(
+            {
+                "edge_id": ["start", "bad_end"],
+                "road_class": ["residential", "residential"],
+                "sumo_name": ["", ""],
+                "from_node": ["a", "x"],
+                "to_node": ["b", "y"],
+            },
+            geometry=[
+                LineString([(0.0, 0.0), (1.0, 0.0)]),
+                LineString([(10.0, 0.0), (11.0, 0.0)]),
+            ],
+            crs="EPSG:2056",
+        )
 
-        kept, dropped = _apply_endpoint_distance_guardrail(matched, 150.0)
+        matched = _match_trips(
+            trips,
+            edges=edges,
+            link_vectors={"start_link": (1.0, 0.0), "end_link": (1.0, 0.0)},
+            start_edge_ids={"start"},
+            end_edge_ids={"bad_end"},
+            out_neighbors={"start": set(), "bad_end": set()},
+            in_neighbors={"start": set(), "bad_end": set()},
+            matsim_road_classes={"start_link": "residential", "end_link": "residential"},
+            matsim_link_metadata={},
+            road_type_enabled=True,
+            same_type_max_radius_m=150.0,
+            fallback_enabled=True,
+            fallback_max_radius_m=150.0,
+            route_sequence_enabled=False,
+            route_sequence_max_radius_m=150.0,
+            route_sequence_min_dot=0.3,
+        )
 
-        self.assertTrue(kept.empty)
-        self.assertEqual(len(dropped), 1)
-        self.assertFalse(bool(dropped.iloc[0]["match_ok"]))
+        self.assertEqual(matched.iloc[0]["from_edge"], "start")
+        self.assertTrue(pd.isna(matched.iloc[0]["to_edge"]))
+        self.assertFalse(bool(matched.iloc[0]["match_ok"]))
 
 
 if __name__ == "__main__":
