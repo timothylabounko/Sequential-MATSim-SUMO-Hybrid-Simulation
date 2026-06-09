@@ -44,6 +44,9 @@ sumo_match_fallback_max_radius_m: 150.0
 sumo_match_route_sequence_enabled: true
 sumo_match_route_sequence_max_radius_m: 150.0
 sumo_match_route_sequence_min_dot: 0.3
+sumo_match_routeable_endpoints_enabled: true
+sumo_match_routeable_candidate_limit: 20
+sumo_match_routeable_candidate_extra_m: 100.0
 max_sumo_endpoint_distance_m: 150.0
 
 # Step 4: SUMO trip generation

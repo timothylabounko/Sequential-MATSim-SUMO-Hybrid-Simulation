@@ -13,9 +13,11 @@ from matsim_sumo.utils.cache import disk_cache, file_dep, output_needs_refresh, 
 from matsim_sumo.pipeline.state import PipelineState
 
 SECOND_NEAREST_EXTRA_M = 50.0
+DEFAULT_ROUTEABLE_CANDIDATE_LIMIT = 20
+DEFAULT_ROUTEABLE_CANDIDATE_EXTRA_M = 100.0
 DISTANCE_DIAGNOSTIC_THRESHOLDS_M = (50.0, 100.0, 150.0, 250.0)
 LOCAL_ACTIVITY_ENDPOINT_CLASSES = {"residential", "living_street", "service"}
-MATCH_SUMO_EDGES_LOGIC_VERSION = 2
+MATCH_SUMO_EDGES_LOGIC_VERSION = 3
 
 
 def _config_float(config: dict, key: str, default: float | None) -> float | None:
@@ -381,6 +383,233 @@ def _nearest_edges_type_aware(
     return edge, dist, matsim_class, sumo_class, policy
 
 
+def _routeable_candidates_for_row(
+    row: pd.Series,
+    edges: gpd.GeoDataFrame,
+    x_col: str,
+    y_col: str,
+    point_type: str,
+    link_vectors: dict[str, tuple[float, float]],
+    matsim_road_classes: dict[str, str | None],
+    same_type_max_radius_m: float,
+    fallback_enabled: bool,
+    road_type_enabled: bool,
+    fallback_max_radius_m: float | None,
+    candidate_limit: int,
+    candidate_extra_m: float,
+) -> list[dict[str, object]]:
+    x = pd.to_numeric(pd.Series([row.get(x_col)]), errors="coerce").iloc[0]
+    y = pd.to_numeric(pd.Series([row.get(y_col)]), errors="coerce").iloc[0]
+    if pd.isna(x) or pd.isna(y) or edges.empty:
+        return []
+
+    link_col = _reference_link_col(pd.DataFrame([row]), point_type)
+    link_id = row.get(link_col)
+    matsim_class = matsim_road_classes.get(str(link_id))
+    mvx, mvy = link_vectors.get(str(link_id), (np.nan, np.nan))
+    point = Point(float(x), float(y))
+
+    def _collect(
+        candidate_edges: gpd.GeoDataFrame,
+        radius_m: float | None,
+        policy: str,
+    ) -> list[dict[str, object]]:
+        if candidate_edges.empty:
+            return []
+        if radius_m is None:
+            pairs = candidate_edges.sindex.nearest([point], return_all=True, return_distance=False)
+        else:
+            search_radius_m = float(radius_m) + float(candidate_extra_m)
+            pairs = candidate_edges.sindex.query([point], predicate="dwithin", distance=search_radius_m)
+        if pairs.size == 0:
+            return []
+        edge_positions = np.asarray(pairs[1], dtype=int)
+        edge_positions = np.unique(edge_positions)
+        distances = candidate_edges.geometry.iloc[edge_positions].distance(point, align=False).to_numpy(dtype=float)
+        edge_dx = candidate_edges["edge_dx"].iloc[edge_positions].to_numpy(dtype=float)
+        edge_dy = candidate_edges["edge_dy"].iloc[edge_positions].to_numpy(dtype=float)
+        if np.isfinite(mvx) and np.isfinite(mvy):
+            dots = mvx * edge_dx + mvy * edge_dy
+        else:
+            dots = np.zeros(edge_positions.shape[0], dtype=float)
+
+        out = []
+        for pos, dist, dot in zip(edge_positions, distances, dots):
+            edge_row = candidate_edges.iloc[int(pos)]
+            out.append(
+                {
+                    "edge_id": str(edge_row["edge_id"]),
+                    "dist": float(dist),
+                    "dot": float(dot) if np.isfinite(dot) else 0.0,
+                    "matsim_class": matsim_class,
+                    "sumo_class": edge_row.get("road_class"),
+                    "policy": policy,
+                }
+            )
+        out.sort(key=lambda item: (float(item["dist"]), -float(item["dot"]), str(item["edge_id"])))
+        return out[:candidate_limit]
+
+    if road_type_enabled and matsim_class is not None:
+        same_type = edges[edges["road_class"].eq(matsim_class)]
+        candidates = _collect(same_type, same_type_max_radius_m, "same_type")
+        if candidates:
+            return candidates
+
+    if not fallback_enabled:
+        return []
+    fallback_policy = "missing_matsim_type" if road_type_enabled and matsim_class is None else "fallback_any"
+    return _collect(edges, fallback_max_radius_m, fallback_policy)
+
+
+def _is_reachable(
+    from_edge: object,
+    to_edge: object,
+    out_neighbors: dict[str, set[str]],
+    cache: dict[str, set[str]],
+) -> bool:
+    if from_edge is None or to_edge is None or pd.isna(from_edge) or pd.isna(to_edge):
+        return False
+    start = str(from_edge)
+    target = str(to_edge)
+    if start == target:
+        return True
+    if start not in cache:
+        seen = {start}
+        stack = [start]
+        while stack:
+            edge_id = stack.pop()
+            for next_edge in out_neighbors.get(edge_id, set()):
+                if next_edge not in seen:
+                    seen.add(next_edge)
+                    stack.append(next_edge)
+        cache[start] = seen
+    return target in cache[start]
+
+
+def _apply_candidate(
+    out: pd.DataFrame,
+    idx,
+    prefix: str,
+    candidate: dict[str, object],
+) -> None:
+    out.loc[idx, f"{prefix}_edge"] = candidate["edge_id"]
+    out.loc[idx, f"{prefix}_edge_dist_m"] = candidate["dist"]
+    out.loc[idx, f"{prefix}_matsim_road_class"] = candidate["matsim_class"]
+    out.loc[idx, f"{prefix}_sumo_road_class"] = candidate["sumo_class"]
+    out.loc[idx, f"{prefix}_match_policy"] = candidate["policy"]
+
+
+def _repair_unrouteable_matches(
+    out: pd.DataFrame,
+    start_edges: gpd.GeoDataFrame,
+    end_edges: gpd.GeoDataFrame,
+    link_vectors: dict[str, tuple[float, float]],
+    out_neighbors: dict[str, set[str]],
+    matsim_road_classes: dict[str, str | None],
+    road_type_enabled: bool,
+    same_type_max_radius_m: float,
+    fallback_enabled: bool,
+    fallback_max_radius_m: float | None,
+    candidate_limit: int,
+    candidate_extra_m: float,
+) -> pd.DataFrame:
+    if not out_neighbors:
+        out["sumo_endpoint_routeable"] = out["from_edge"].notna() & out["to_edge"].notna()
+        return out
+
+    cache: dict[str, set[str]] = {}
+    routeable = pd.Series(False, index=out.index, dtype=bool)
+    matched = out["from_edge"].notna() & out["to_edge"].notna()
+    routeable.loc[matched] = [
+        _is_reachable(from_edge, to_edge, out_neighbors, cache)
+        for from_edge, to_edge in zip(out.loc[matched, "from_edge"], out.loc[matched, "to_edge"])
+    ]
+
+    for idx in out.index[matched & ~routeable]:
+        row = out.loc[idx]
+        crossing_type = str(row.get("crossing_type", ""))
+        start_candidates: list[dict[str, object]] = []
+        end_candidates: list[dict[str, object]] = []
+
+        if crossing_type in {"leaving", "inside"}:
+            start_candidates = _routeable_candidates_for_row(
+                row,
+                start_edges,
+                "start_x",
+                "start_y",
+                point_type="start",
+                link_vectors=link_vectors,
+                matsim_road_classes=matsim_road_classes,
+                same_type_max_radius_m=same_type_max_radius_m,
+                fallback_enabled=fallback_enabled,
+                road_type_enabled=road_type_enabled,
+                fallback_max_radius_m=fallback_max_radius_m,
+                candidate_limit=candidate_limit,
+                candidate_extra_m=candidate_extra_m,
+            )
+        if crossing_type in {"entering", "inside", "pass_through"}:
+            end_candidates = _routeable_candidates_for_row(
+                row,
+                end_edges,
+                "end_x",
+                "end_y",
+                point_type="end",
+                link_vectors=link_vectors,
+                matsim_road_classes=matsim_road_classes,
+                same_type_max_radius_m=same_type_max_radius_m,
+                fallback_enabled=fallback_enabled,
+                road_type_enabled=road_type_enabled,
+                fallback_max_radius_m=fallback_max_radius_m,
+                candidate_limit=candidate_limit,
+                candidate_extra_m=candidate_extra_m,
+            )
+
+        repaired = False
+        if crossing_type in {"entering", "pass_through"}:
+            fixed_from = row["from_edge"]
+            for candidate in end_candidates:
+                if _is_reachable(fixed_from, candidate["edge_id"], out_neighbors, cache):
+                    _apply_candidate(out, idx, "to", candidate)
+                    repaired = True
+                    break
+        elif crossing_type == "leaving":
+            fixed_to = row["to_edge"]
+            for candidate in start_candidates:
+                if _is_reachable(candidate["edge_id"], fixed_to, out_neighbors, cache):
+                    _apply_candidate(out, idx, "from", candidate)
+                    repaired = True
+                    break
+        elif crossing_type == "inside":
+            best: tuple[float, float, dict[str, object], dict[str, object]] | None = None
+            for start_candidate in start_candidates:
+                for end_candidate in end_candidates:
+                    if not _is_reachable(start_candidate["edge_id"], end_candidate["edge_id"], out_neighbors, cache):
+                        continue
+                    score = (
+                        float(start_candidate["dist"]) + float(end_candidate["dist"]),
+                        -float(start_candidate["dot"]) - float(end_candidate["dot"]),
+                        start_candidate,
+                        end_candidate,
+                    )
+                    if best is None or score[:2] < best[:2]:
+                        best = score
+            if best is not None:
+                _apply_candidate(out, idx, "from", best[2])
+                _apply_candidate(out, idx, "to", best[3])
+                repaired = True
+
+        if repaired:
+            routeable.loc[idx] = _is_reachable(out.loc[idx, "from_edge"], out.loc[idx, "to_edge"], out_neighbors, cache)
+
+    matched = out["from_edge"].notna() & out["to_edge"].notna()
+    routeable.loc[matched] = [
+        _is_reachable(from_edge, to_edge, out_neighbors, cache)
+        for from_edge, to_edge in zip(out.loc[matched, "from_edge"], out.loc[matched, "to_edge"])
+    ]
+    out["sumo_endpoint_routeable"] = routeable
+    return out
+
+
 def _build_route_candidate_indexes(
     candidate_edges: gpd.GeoDataFrame,
 ) -> tuple[dict[tuple[str, str], list[dict]], dict[str, list[dict]], dict[tuple[str, str], list[dict]]]:
@@ -567,6 +796,7 @@ def _match_trips(
     link_vectors: dict[str, tuple[float, float]],
     start_edge_ids: set[str],
     end_edge_ids: set[str],
+    out_neighbors: dict[str, set[str]] | None,
     in_neighbors: dict[str, set[str]],
     matsim_road_classes: dict[str, str | None],
     matsim_link_metadata: dict[str, dict[str, object]],
@@ -577,6 +807,9 @@ def _match_trips(
     route_sequence_enabled: bool,
     route_sequence_max_radius_m: float,
     route_sequence_min_dot: float,
+    routeable_endpoints_enabled: bool = True,
+    routeable_candidate_limit: int = DEFAULT_ROUTEABLE_CANDIDATE_LIMIT,
+    routeable_candidate_extra_m: float = DEFAULT_ROUTEABLE_CANDIDATE_EXTRA_M,
 ) -> pd.DataFrame:
     out = trips.copy()
     edge_vec = edges.geometry.map(
@@ -652,7 +885,25 @@ def _match_trips(
             out.loc[ok, "from_match_policy"] = "route_sequence"
             out.loc[ok, "from_route_match_link"] = seq_route_link.loc[ok]
             out.loc[ok, "from_route_match_osm_id"] = seq_route_osm_id.loc[ok]
-    out["match_ok"] = out["from_edge"].notna() & out["to_edge"].notna()
+    if routeable_endpoints_enabled:
+        out = _repair_unrouteable_matches(
+            out,
+            start_edges=start_edges,
+            end_edges=end_edges,
+            link_vectors=link_vectors,
+            out_neighbors=out_neighbors or {},
+            matsim_road_classes=matsim_road_classes,
+            road_type_enabled=road_type_enabled,
+            same_type_max_radius_m=same_type_max_radius_m,
+            fallback_enabled=fallback_enabled,
+            fallback_max_radius_m=fallback_max_radius_m,
+            candidate_limit=routeable_candidate_limit,
+            candidate_extra_m=routeable_candidate_extra_m,
+        )
+        out["match_ok"] = out["from_edge"].notna() & out["to_edge"].notna() & out["sumo_endpoint_routeable"]
+    else:
+        out["sumo_endpoint_routeable"] = pd.NA
+        out["match_ok"] = out["from_edge"].notna() & out["to_edge"].notna()
     return out
 
 
@@ -701,7 +952,8 @@ def _apply_endpoint_distance_guardrail(
     from_dist = pd.to_numeric(out["from_edge_dist_m"], errors="coerce")
     to_dist = pd.to_numeric(out["to_edge_dist_m"], errors="coerce")
     out["sumo_endpoint_max_dist_m"] = pd.concat([from_dist, to_dist], axis=1).max(axis=1)
-    out["match_ok"] = out["from_edge"].notna() & out["to_edge"].notna()
+    routeable = out.get("sumo_endpoint_routeable", pd.Series(True, index=out.index)).fillna(True).astype(bool)
+    out["match_ok"] = out["from_edge"].notna() & out["to_edge"].notna() & routeable
     out["sumo_local_activity_endpoint_fallback"] = _local_activity_endpoint_fallback_mask(out)
 
     keep = out["match_ok"] & ~out["sumo_local_activity_endpoint_fallback"]
@@ -802,6 +1054,15 @@ def _match_sumo_edges_deps(state: PipelineState):
         param_dep("sumo_match_route_sequence_enabled", bool(state.config.get("sumo_match_route_sequence_enabled", True))),
         param_dep("sumo_match_route_sequence_max_radius_m", state.config.get("sumo_match_route_sequence_max_radius_m")),
         param_dep("sumo_match_route_sequence_min_dot", float(state.config.get("sumo_match_route_sequence_min_dot", 0.3))),
+        param_dep("sumo_match_routeable_endpoints_enabled", bool(state.config.get("sumo_match_routeable_endpoints_enabled", True))),
+        param_dep(
+            "sumo_match_routeable_candidate_limit",
+            int(state.config.get("sumo_match_routeable_candidate_limit", DEFAULT_ROUTEABLE_CANDIDATE_LIMIT)),
+        ),
+        param_dep(
+            "sumo_match_routeable_candidate_extra_m",
+            float(state.config.get("sumo_match_routeable_candidate_extra_m", DEFAULT_ROUTEABLE_CANDIDATE_EXTRA_M)),
+        ),
         param_dep("max_sumo_endpoint_distance_m", state.config.get("max_sumo_endpoint_distance_m")),
         param_dep("match_sumo_edges_logic_version", MATCH_SUMO_EDGES_LOGIC_VERSION),
     ]
@@ -819,7 +1080,7 @@ def _compute_match_sumo_edges_cached(
     edges = _load_sumo_edges(state)
     link_vectors = _build_link_vectors(state)
     valid_edge_ids = set(edges["edge_id"].astype(str))
-    _, in_neighbors = _edge_neighbors(state, valid_edge_ids)
+    out_neighbors, in_neighbors = _edge_neighbors(state, valid_edge_ids)
     start_edge_ids, end_edge_ids = _eligible_edge_ids(state, valid_edge_ids)
     road_type_enabled = bool(state.config.get("sumo_match_road_type_enabled", True))
     fallback_enabled = bool(state.config.get("sumo_match_fallback_enabled", True))
@@ -868,6 +1129,7 @@ def _compute_match_sumo_edges_cached(
         link_vectors=link_vectors,
         start_edge_ids=start_edge_ids,
         end_edge_ids=end_edge_ids,
+        out_neighbors=out_neighbors,
         in_neighbors=in_neighbors,
         matsim_road_classes=matsim_road_classes,
         matsim_link_metadata=matsim_link_metadata,
@@ -878,6 +1140,13 @@ def _compute_match_sumo_edges_cached(
         route_sequence_enabled=route_sequence_enabled,
         route_sequence_max_radius_m=route_sequence_max_radius_m,
         route_sequence_min_dot=route_sequence_min_dot,
+        routeable_endpoints_enabled=bool(state.config.get("sumo_match_routeable_endpoints_enabled", True)),
+        routeable_candidate_limit=int(
+            state.config.get("sumo_match_routeable_candidate_limit", DEFAULT_ROUTEABLE_CANDIDATE_LIMIT)
+        ),
+        routeable_candidate_extra_m=float(
+            state.config.get("sumo_match_routeable_candidate_extra_m", DEFAULT_ROUTEABLE_CANDIDATE_EXTRA_M)
+        ),
     )
     diagnostics = _endpoint_distance_diagnostics(matched)
 
@@ -898,18 +1167,19 @@ def _compute_match_sumo_edges_cached(
 def _log_match_sumo_edges_result(state: PipelineState) -> None:
     print(f"SUMO endpoint distances before guardrail: {_format_distance_diagnostics(state.sumo_endpoint_distance_diagnostics)}")
     max_endpoint_distance_m = _config_float(state.config, "max_sumo_endpoint_distance_m", 150.0)
+    guardrails = "distance, local activity fallback, or directed routeability"
     if max_endpoint_distance_m is None:
-        print("SUMO endpoint distance guardrail disabled; local activity endpoint guardrail active.")
+        print("SUMO endpoint distance guardrail disabled; local activity and directed routeability guardrails active.")
     elif state.sumo_endpoint_guardrail_dropped_count:
         dropped_by_type = ", ".join(
             f"{key}={value}" for key, value in state.sumo_endpoint_guardrail_dropped_by_type.items()
         )
         print(
             f"Dropped {state.sumo_endpoint_guardrail_dropped_count} trips by SUMO match guardrails "
-            f"(distance>{max_endpoint_distance_m:.1f}m or local activity fallback; {dropped_by_type})."
+            f"({guardrails}; distance>{max_endpoint_distance_m:.1f}m; {dropped_by_type})."
         )
     else:
-        print(f"Dropped 0 trips by SUMO match guardrails (distance>{max_endpoint_distance_m:.1f}m or local activity fallback).")
+        print(f"Dropped 0 trips by SUMO match guardrails ({guardrails}; distance>{max_endpoint_distance_m:.1f}m).")
 
 
 def run_match_sumo_edges_stage(state: PipelineState) -> None:
