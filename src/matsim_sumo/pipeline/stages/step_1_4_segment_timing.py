@@ -221,7 +221,7 @@ def _segment_timing_deps(state: PipelineState):
         file_dep(state.plans_path),
         param_dep("modes_keep", tuple(state.config["modes_keep"])),
         param_dep("network_crs", state.config.get("network_crs", "EPSG:2056")),
-        param_dep("segment_endpoint_boundary_tolerance_m", state.config.get("segment_endpoint_boundary_tolerance_m", 1.0)),
+        param_dep("segment_endpoint_boundary_tolerance_m", state.config["segment_endpoint_boundary_tolerance_m"]),
     ]
 
 
@@ -246,7 +246,7 @@ def _compute_segment_timing_cached(
     crossing_segments_timed, dropped = drop_segments_outside_boundary(
         crossing_segments_timed,
         state.boundary,
-        tolerance_m=float(state.config.get("segment_endpoint_boundary_tolerance_m", 1.0)),
+        tolerance_m=float(state.config["segment_endpoint_boundary_tolerance_m"]),
     )
     return cut_link_info, events_cut, crossing_events, crossing_segments_timed, dropped
 
@@ -273,7 +273,7 @@ def run_segment_timing_stage(state: PipelineState) -> None:
         print(
             "Dropped "
             f"{state.crossing_segments_outside_boundary_dropped_count} crossing segments outside boundary "
-            f"(tolerance {float(state.config.get('segment_endpoint_boundary_tolerance_m', 1.0)):.2f} m)."
+            f"(tolerance {float(state.config['segment_endpoint_boundary_tolerance_m']):.2f} m)."
         )
     _write_events_cut_if_missing(state.events_cut, state.events_cut_csv_path)
     if output_needs_refresh(_compute_segment_timing_cached, state.crossing_segments_timed_path):

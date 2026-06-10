@@ -18,8 +18,7 @@ LOCAL_ACTIVITY_ENDPOINT_CLASSES = {"residential", "living_street", "service"}
 MATCH_SUMO_EDGES_LOGIC_VERSION = 3
 
 
-def _config_float(config: dict, key: str, default: float | None) -> float | None:
-    value = config.get(key, default)
+def _optional_float(value: object) -> float | None:
     return None if value is None else float(value)
 
 
@@ -942,14 +941,14 @@ def _match_sumo_edges_deps(state: PipelineState):
         param_dep("demand_scaling_seed", int(state.config["demand_scaling_seed"])),
         param_dep("amenity_kdtree_enabled", bool(state.config["amenity_kdtree_enabled"])),
         param_dep("sumo_vclass_map", state.config["sumo_vclass_map"]),
-        param_dep("sumo_match_road_type_enabled", bool(state.config.get("sumo_match_road_type_enabled", True))),
-        param_dep("sumo_match_same_type_max_radius_m", state.config.get("sumo_match_same_type_max_radius_m")),
-        param_dep("sumo_match_fallback_enabled", bool(state.config.get("sumo_match_fallback_enabled", True))),
-        param_dep("sumo_match_fallback_max_radius_m", state.config.get("sumo_match_fallback_max_radius_m")),
-        param_dep("sumo_match_route_sequence_enabled", bool(state.config.get("sumo_match_route_sequence_enabled", True))),
-        param_dep("sumo_match_route_sequence_max_radius_m", state.config.get("sumo_match_route_sequence_max_radius_m")),
-        param_dep("sumo_match_route_sequence_min_dot", float(state.config.get("sumo_match_route_sequence_min_dot", 0.3))),
-        param_dep("max_sumo_endpoint_distance_m", state.config.get("max_sumo_endpoint_distance_m")),
+        param_dep("sumo_match_road_type_enabled", bool(state.config["sumo_match_road_type_enabled"])),
+        param_dep("sumo_match_same_type_max_radius_m", state.config["sumo_match_same_type_max_radius_m"]),
+        param_dep("sumo_match_fallback_enabled", bool(state.config["sumo_match_fallback_enabled"])),
+        param_dep("sumo_match_fallback_max_radius_m", state.config["sumo_match_fallback_max_radius_m"]),
+        param_dep("sumo_match_route_sequence_enabled", bool(state.config["sumo_match_route_sequence_enabled"])),
+        param_dep("sumo_match_route_sequence_max_radius_m", state.config["sumo_match_route_sequence_max_radius_m"]),
+        param_dep("sumo_match_route_sequence_min_dot", float(state.config["sumo_match_route_sequence_min_dot"])),
+        param_dep("max_sumo_endpoint_distance_m", state.config["max_sumo_endpoint_distance_m"]),
         param_dep("match_sumo_edges_logic_version", MATCH_SUMO_EDGES_LOGIC_VERSION),
     ]
     if state.config["amenity_kdtree_enabled"]:
@@ -968,18 +967,14 @@ def _compute_match_sumo_edges_cached(
     valid_edge_ids = set(edges["edge_id"].astype(str))
     out_neighbors, in_neighbors = _edge_neighbors(state, valid_edge_ids)
     start_edge_ids, end_edge_ids = _eligible_edge_ids(state, valid_edge_ids)
-    road_type_enabled = bool(state.config.get("sumo_match_road_type_enabled", True))
-    fallback_enabled = bool(state.config.get("sumo_match_fallback_enabled", True))
-    max_endpoint_distance_m = _config_float(state.config, "max_sumo_endpoint_distance_m", 150.0)
-    same_type_max_radius_m = float(
-        _config_float(state.config, "sumo_match_same_type_max_radius_m", max_endpoint_distance_m or 150.0)
-    )
-    fallback_max_radius_m = _config_float(state.config, "sumo_match_fallback_max_radius_m", max_endpoint_distance_m)
-    route_sequence_enabled = bool(state.config.get("sumo_match_route_sequence_enabled", True))
-    route_sequence_max_radius_m = float(
-        _config_float(state.config, "sumo_match_route_sequence_max_radius_m", max_endpoint_distance_m or 150.0)
-    )
-    route_sequence_min_dot = float(state.config.get("sumo_match_route_sequence_min_dot", 0.3))
+    road_type_enabled = bool(state.config["sumo_match_road_type_enabled"])
+    fallback_enabled = bool(state.config["sumo_match_fallback_enabled"])
+    max_endpoint_distance_m = _optional_float(state.config["max_sumo_endpoint_distance_m"])
+    same_type_max_radius_m = float(_optional_float(state.config["sumo_match_same_type_max_radius_m"]))
+    fallback_max_radius_m = _optional_float(state.config["sumo_match_fallback_max_radius_m"])
+    route_sequence_enabled = bool(state.config["sumo_match_route_sequence_enabled"])
+    route_sequence_max_radius_m = float(_optional_float(state.config["sumo_match_route_sequence_max_radius_m"]))
+    route_sequence_min_dot = float(state.config["sumo_match_route_sequence_min_dot"])
     sumo_edge_metadata = _build_sumo_edge_metadata(state, valid_edge_ids)
     edges["road_class"] = edges["edge_id"].astype(str).map(
         {edge_id: meta["road_class"] for edge_id, meta in sumo_edge_metadata.items()}
@@ -1045,7 +1040,7 @@ def _compute_match_sumo_edges_cached(
 
 def _log_match_sumo_edges_result(state: PipelineState) -> None:
     print(f"SUMO endpoint distances before guardrail: {_format_distance_diagnostics(state.sumo_endpoint_distance_diagnostics)}")
-    max_endpoint_distance_m = _config_float(state.config, "max_sumo_endpoint_distance_m", 150.0)
+    max_endpoint_distance_m = _optional_float(state.config["max_sumo_endpoint_distance_m"])
     if max_endpoint_distance_m is None:
         print("SUMO endpoint distance guardrail disabled; local activity endpoint guardrail active.")
     elif state.sumo_endpoint_guardrail_dropped_count:

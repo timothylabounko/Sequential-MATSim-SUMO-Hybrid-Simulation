@@ -24,6 +24,21 @@ REQUIRED_CONFIG_KEYS = {
     "sumo_routes_file",
     "sumo_unrouted_trips_file",
     "duarouter_log_file",
+    "boundary_force_rebuild",
+    "sumo_boundary_network_buffer_m",
+    "sumo_boundary_gap_close_m",
+    "sumo_boundary_inward_buffer_m",
+    "sumo_boundary_simplify_m",
+    "sumo_boundary_outward_buffer_m",
+    "segment_endpoint_boundary_tolerance_m",
+    "sumo_match_road_type_enabled",
+    "sumo_match_same_type_max_radius_m",
+    "sumo_match_fallback_enabled",
+    "sumo_match_fallback_max_radius_m",
+    "sumo_match_route_sequence_enabled",
+    "sumo_match_route_sequence_max_radius_m",
+    "sumo_match_route_sequence_min_dot",
+    "max_sumo_endpoint_distance_m",
 }
 
 
