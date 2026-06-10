@@ -30,13 +30,17 @@ def param_dep(name: str, value: Any) -> ParamDep:
     return ParamDep(name, value)
 
 
-def _file_fingerprint(path: Path) -> tuple[str, str, int | None, int | None]:
+def _file_fingerprint(path: Path) -> tuple[str, str, int | None, str | None]:
     path = path.resolve()
     try:
         stat = path.stat()
     except FileNotFoundError:
         return ("file", str(path), None, None)
-    return ("file", str(path), int(stat.st_size), int(stat.st_mtime_ns))
+    hasher = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return ("file", str(path), int(stat.st_size), hasher.hexdigest())
 
 
 def _normalize_dep(dep: Any) -> tuple[Any, ...]:

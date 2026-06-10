@@ -59,9 +59,21 @@ class ConfigCliTest(unittest.TestCase):
 
         self.assertEqual(state.network_path, Path("data/inputs/matsim/output_network.xml.gz"))
         self.assertEqual(resolve_sumo_network_path(cfg), Path("data/inputs/sumo/scenario.net.xml"))
+        self.assertEqual(state.boundary_path, Path("results/test/0_sumo_boundary.geojson"))
+        self.assertEqual(state.sumo_network_lv95_path, Path("results/test/0_sumo_network_lv95.geojson"))
         self.assertEqual(state.scaled_trips_path, Path("results/test/2_scaled_trips.csv.gz"))
         self.assertEqual(state.scaled_trips_matched_path, Path("results/test/3_matched_trips.csv.gz"))
         self.assertEqual(state.sumo_trips_path, Path("results/test/4_1_sumo_trips.xml"))
+
+    def test_custom_generated_artifact_paths_are_preserved(self) -> None:
+        cfg = _minimal_config()
+        cfg["boundary_file"] = "data/boundaries/manual_boundary.geojson"
+        cfg["sumo_network_lv95_tmp_file"] = "outputs/manual_sumo_lv95.geojson"
+
+        state = build_pipeline_state(cfg)
+
+        self.assertEqual(state.boundary_path, Path("data/boundaries/manual_boundary.geojson"))
+        self.assertEqual(state.sumo_network_lv95_path, Path("outputs/manual_sumo_lv95.geojson"))
 
     def test_run_help_is_available(self) -> None:
         out = StringIO()

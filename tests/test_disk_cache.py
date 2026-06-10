@@ -68,6 +68,23 @@ class DiskCacheTest(unittest.TestCase):
         self.assertEqual(self._quiet(compute), 2)
         self.assertEqual(calls, ["one", "changed contents"])
 
+    def test_file_fingerprint_ignores_identical_rewrite_mtime(self) -> None:
+        dep = Path("input.txt")
+        dep.write_text("same", encoding="utf-8")
+        calls = []
+
+        @disk_cache(depends_on=lambda: [file_dep(dep)], step_name="file_same_rewrite")
+        def compute():
+            calls.append(dep.read_text(encoding="utf-8"))
+            return len(calls)
+
+        self.assertEqual(self._quiet(compute), 1)
+        dep.write_text("same", encoding="utf-8")
+        stat = dep.stat()
+        os.utime(dep, (stat.st_atime + 10, stat.st_mtime + 10))
+        self.assertEqual(self._quiet(compute), 1)
+        self.assertEqual(calls, ["same"])
+
     def test_no_cache_bypasses_load_and_save(self) -> None:
         calls = []
 

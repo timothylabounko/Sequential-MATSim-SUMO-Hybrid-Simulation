@@ -25,6 +25,19 @@ def resolve_sumo_network_path(config: dict) -> Path:
     return Path(config.get("sumo_input_dir", "")) / path
 
 
+def _is_shared_generated_path(path: str | Path) -> bool:
+    parts = Path(path).parts
+    shared_roots = {("data", "generated"), ("data", "tmp")}
+    return any(parts[i : i + 2] in shared_roots for i in range(len(parts) - 1))
+
+
+def _resolve_run_generated_path(path: str | Path, output_dir: Path, filename: str) -> Path:
+    path = Path(path)
+    if _is_shared_generated_path(path):
+        return output_dir / filename
+    return path
+
+
 def build_pipeline_state(config: dict) -> PipelineState:
     matsim_output_dir = Path(config["matsim_output_dir"])
     output_dir = Path(config["output_dir"])
@@ -33,7 +46,11 @@ def build_pipeline_state(config: dict) -> PipelineState:
         config=config,
         matsim_output_dir=matsim_output_dir,
         output_dir=output_dir,
-        boundary_path=Path(config["boundary_file"]),
+        boundary_path=_resolve_run_generated_path(
+            config["boundary_file"],
+            output_dir,
+            "0_sumo_boundary.geojson",
+        ),
         network_path=matsim_output_dir / config["network_file"],
         plans_path=matsim_output_dir / config["plans_file"],
         trips_path=matsim_output_dir / config["trips_file"],
@@ -55,7 +72,11 @@ def build_pipeline_state(config: dict) -> PipelineState:
         combined_trips_path=output_dir / config.get("combined_trips_file", "1_6_combined_trips.csv.gz"),
         scaled_trips_path=output_dir / config.get("scaled_trips_file", "2_scaled_trips.csv.gz"),
         sumo_network_path=resolve_sumo_network_path(config),
-        sumo_network_lv95_path=Path(config["sumo_network_lv95_tmp_file"]),
+        sumo_network_lv95_path=_resolve_run_generated_path(
+            config["sumo_network_lv95_tmp_file"],
+            output_dir,
+            "0_sumo_network_lv95.geojson",
+        ),
         scaled_trips_matched_path=output_dir
         / config.get("scaled_trips_matched_file", "3_matched_trips.csv.gz"),
         sumo_trips_path=output_dir / config.get("sumo_trips_file", "4_1_sumo_trips.xml"),
