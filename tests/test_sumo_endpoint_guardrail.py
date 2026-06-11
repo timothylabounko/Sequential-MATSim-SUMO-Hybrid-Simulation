@@ -168,6 +168,59 @@ class SumoEndpointGuardrailTest(unittest.TestCase):
         self.assertEqual(matched.iloc[0]["to_edge"], "good_end")
         self.assertTrue(bool(matched.iloc[0]["match_ok"]))
 
+    def test_routeable_endpoint_match_can_be_disabled(self) -> None:
+        trips = pd.DataFrame(
+            {
+                "start_x": [0.0],
+                "start_y": [0.0],
+                "end_x": [10.0],
+                "end_y": [0.0],
+                "crossing_type": ["entering"],
+                "route_links": [""],
+                "new_start_link": ["start_link"],
+                "new_end_link": ["end_link"],
+            }
+        )
+        edges = gpd.GeoDataFrame(
+            {
+                "edge_id": ["start", "bad_end", "good_end"],
+                "road_class": ["residential", "residential", "residential"],
+                "sumo_name": ["", "", ""],
+                "from_node": ["a", "x", "b"],
+                "to_node": ["b", "y", "c"],
+            },
+            geometry=[
+                LineString([(0.0, 0.0), (1.0, 0.0)]),
+                LineString([(10.0, 0.0), (11.0, 0.0)]),
+                LineString([(12.0, 0.0), (13.0, 0.0)]),
+            ],
+            crs="EPSG:2056",
+        )
+
+        matched = _match_trips(
+            trips,
+            edges=edges,
+            link_vectors={"start_link": (1.0, 0.0), "end_link": (1.0, 0.0)},
+            start_edge_ids={"start"},
+            end_edge_ids={"bad_end", "good_end"},
+            out_neighbors={"start": {"good_end"}, "bad_end": set(), "good_end": set()},
+            in_neighbors={"start": set(), "bad_end": set(), "good_end": {"start"}},
+            matsim_road_classes={"start_link": "residential", "end_link": "residential"},
+            matsim_link_metadata={},
+            road_type_enabled=True,
+            same_type_max_radius_m=150.0,
+            fallback_enabled=True,
+            fallback_max_radius_m=150.0,
+            route_sequence_enabled=False,
+            route_sequence_max_radius_m=150.0,
+            route_sequence_min_dot=0.3,
+            routeable_endpoints_enabled=False,
+        )
+
+        self.assertEqual(matched.iloc[0]["from_edge"], "start")
+        self.assertEqual(matched.iloc[0]["to_edge"], "bad_end")
+        self.assertTrue(bool(matched.iloc[0]["match_ok"]))
+
     def test_leaving_trip_matches_start_only_from_edges_reaching_destination(self) -> None:
         trips = pd.DataFrame(
             {

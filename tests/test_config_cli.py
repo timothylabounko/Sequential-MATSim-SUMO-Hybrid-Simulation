@@ -47,6 +47,7 @@ def _minimal_config() -> dict:
         "sumo_match_route_sequence_enabled": True,
         "sumo_match_route_sequence_max_radius_m": 150.0,
         "sumo_match_route_sequence_min_dot": 0.3,
+        "sumo_match_routeable_endpoints_enabled": True,
         "max_sumo_endpoint_distance_m": 150.0,
         "run_duarouter": False,
         "duarouter_bin": "duarouter",

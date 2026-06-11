@@ -38,6 +38,7 @@ REQUIRED_CONFIG_KEYS = {
     "sumo_match_route_sequence_enabled",
     "sumo_match_route_sequence_max_radius_m",
     "sumo_match_route_sequence_min_dot",
+    "sumo_match_routeable_endpoints_enabled",
     "max_sumo_endpoint_distance_m",
 }
 

@@ -672,6 +672,7 @@ def _match_trips(
     route_sequence_enabled: bool,
     route_sequence_max_radius_m: float,
     route_sequence_min_dot: float,
+    routeable_endpoints_enabled: bool = True,
 ) -> pd.DataFrame:
     out = trips.copy()
     edge_vec = edges.geometry.map(
@@ -748,55 +749,56 @@ def _match_trips(
             out.loc[ok, "from_route_match_link"] = seq_route_link.loc[ok]
             out.loc[ok, "from_route_match_osm_id"] = seq_route_osm_id.loc[ok]
 
-    crossing = out.get("crossing_type", pd.Series("", index=out.index)).astype(str)
-    to_routeable_from = crossing.isin({"entering", "inside", "pass_through"})
-    from_routeable_to = crossing.eq("leaving")
+    if routeable_endpoints_enabled:
+        crossing = out.get("crossing_type", pd.Series("", index=out.index)).astype(str)
+        to_routeable_from = crossing.isin({"entering", "inside", "pass_through"})
+        from_routeable_to = crossing.eq("leaving")
 
-    reachable_from_cache: dict[str, set[str]] = {}
-    destination_allowed = {
-        edge_id: _edges_reachable_from(edge_id, out_neighbors, reachable_from_cache)
-        for edge_id in out.loc[to_routeable_from & out["from_edge"].notna(), "from_edge"].astype(str).unique()
-    }
-    _match_endpoint_with_allowed_edges(
-        out,
-        row_mask=to_routeable_from,
-        candidate_edges=end_edges,
-        allowed_edges_by_fixed_edge=destination_allowed,
-        fixed_edge_col="from_edge",
-        prefix="to",
-        x_col="end_x",
-        y_col="end_y",
-        point_type="end",
-        link_vectors=link_vectors,
-        matsim_road_classes=matsim_road_classes,
-        road_type_enabled=road_type_enabled,
-        same_type_max_radius_m=same_type_max_radius_m,
-        fallback_enabled=fallback_enabled,
-        fallback_max_radius_m=fallback_max_radius_m,
-    )
+        reachable_from_cache: dict[str, set[str]] = {}
+        destination_allowed = {
+            edge_id: _edges_reachable_from(edge_id, out_neighbors, reachable_from_cache)
+            for edge_id in out.loc[to_routeable_from & out["from_edge"].notna(), "from_edge"].astype(str).unique()
+        }
+        _match_endpoint_with_allowed_edges(
+            out,
+            row_mask=to_routeable_from,
+            candidate_edges=end_edges,
+            allowed_edges_by_fixed_edge=destination_allowed,
+            fixed_edge_col="from_edge",
+            prefix="to",
+            x_col="end_x",
+            y_col="end_y",
+            point_type="end",
+            link_vectors=link_vectors,
+            matsim_road_classes=matsim_road_classes,
+            road_type_enabled=road_type_enabled,
+            same_type_max_radius_m=same_type_max_radius_m,
+            fallback_enabled=fallback_enabled,
+            fallback_max_radius_m=fallback_max_radius_m,
+        )
 
-    reaching_cache: dict[str, set[str]] = {}
-    start_allowed = {
-        edge_id: _edges_reaching(edge_id, in_neighbors, reaching_cache)
-        for edge_id in out.loc[from_routeable_to & out["to_edge"].notna(), "to_edge"].astype(str).unique()
-    }
-    _match_endpoint_with_allowed_edges(
-        out,
-        row_mask=from_routeable_to,
-        candidate_edges=start_edges,
-        allowed_edges_by_fixed_edge=start_allowed,
-        fixed_edge_col="to_edge",
-        prefix="from",
-        x_col="start_x",
-        y_col="start_y",
-        point_type="start",
-        link_vectors=link_vectors,
-        matsim_road_classes=matsim_road_classes,
-        road_type_enabled=road_type_enabled,
-        same_type_max_radius_m=same_type_max_radius_m,
-        fallback_enabled=fallback_enabled,
-        fallback_max_radius_m=fallback_max_radius_m,
-    )
+        reaching_cache: dict[str, set[str]] = {}
+        start_allowed = {
+            edge_id: _edges_reaching(edge_id, in_neighbors, reaching_cache)
+            for edge_id in out.loc[from_routeable_to & out["to_edge"].notna(), "to_edge"].astype(str).unique()
+        }
+        _match_endpoint_with_allowed_edges(
+            out,
+            row_mask=from_routeable_to,
+            candidate_edges=start_edges,
+            allowed_edges_by_fixed_edge=start_allowed,
+            fixed_edge_col="to_edge",
+            prefix="from",
+            x_col="start_x",
+            y_col="start_y",
+            point_type="start",
+            link_vectors=link_vectors,
+            matsim_road_classes=matsim_road_classes,
+            road_type_enabled=road_type_enabled,
+            same_type_max_radius_m=same_type_max_radius_m,
+            fallback_enabled=fallback_enabled,
+            fallback_max_radius_m=fallback_max_radius_m,
+        )
 
     out["match_ok"] = out["from_edge"].notna() & out["to_edge"].notna()
     return out
@@ -948,6 +950,7 @@ def _match_sumo_edges_deps(state: PipelineState):
         param_dep("sumo_match_route_sequence_enabled", bool(state.config["sumo_match_route_sequence_enabled"])),
         param_dep("sumo_match_route_sequence_max_radius_m", state.config["sumo_match_route_sequence_max_radius_m"]),
         param_dep("sumo_match_route_sequence_min_dot", float(state.config["sumo_match_route_sequence_min_dot"])),
+        param_dep("sumo_match_routeable_endpoints_enabled", bool(state.config["sumo_match_routeable_endpoints_enabled"])),
         param_dep("max_sumo_endpoint_distance_m", state.config["max_sumo_endpoint_distance_m"]),
         param_dep("match_sumo_edges_logic_version", MATCH_SUMO_EDGES_LOGIC_VERSION),
     ]
@@ -975,6 +978,7 @@ def _compute_match_sumo_edges_cached(
     route_sequence_enabled = bool(state.config["sumo_match_route_sequence_enabled"])
     route_sequence_max_radius_m = float(_optional_float(state.config["sumo_match_route_sequence_max_radius_m"]))
     route_sequence_min_dot = float(state.config["sumo_match_route_sequence_min_dot"])
+    routeable_endpoints_enabled = bool(state.config["sumo_match_routeable_endpoints_enabled"])
     sumo_edge_metadata = _build_sumo_edge_metadata(state, valid_edge_ids)
     edges["road_class"] = edges["edge_id"].astype(str).map(
         {edge_id: meta["road_class"] for edge_id, meta in sumo_edge_metadata.items()}
@@ -1021,6 +1025,7 @@ def _compute_match_sumo_edges_cached(
         route_sequence_enabled=route_sequence_enabled,
         route_sequence_max_radius_m=route_sequence_max_radius_m,
         route_sequence_min_dot=route_sequence_min_dot,
+        routeable_endpoints_enabled=routeable_endpoints_enabled,
     )
     diagnostics = _endpoint_distance_diagnostics(matched)
 
