@@ -1,5 +1,6 @@
 from matsim_sumo.network.sumo_boundary import compute_and_save_sumo_boundary
 from matsim_sumo.pipeline.state import PipelineState
+from matsim_sumo.visualization.boundary import confirm_boundary_preview
 
 
 def run_sumo_boundary_stage(state: PipelineState, vclasses: tuple[str, ...]) -> None:
@@ -15,3 +16,4 @@ def run_sumo_boundary_stage(state: PipelineState, vclasses: tuple[str, ...]) -> 
         vclasses=vclasses,
         no_cache=bool(state.config.get("no_cache", False)) or bool(state.config["boundary_force_rebuild"]),
     )
+    confirm_boundary_preview(state.sumo_network_geo, state.boundary_path, state.output_dir)

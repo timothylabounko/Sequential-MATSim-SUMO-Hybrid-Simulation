@@ -15,7 +15,6 @@ from matsim_sumo.pipeline.stages.step_2_demand_scaling import run_demand_scaling
 from matsim_sumo.pipeline.stages.step_3_map_matching import run_match_sumo_edges_stage
 from matsim_sumo.pipeline.stages.step_4_1_write_sumo_trips import run_write_sumo_trips_xml_stage
 from matsim_sumo.pipeline.stages.step_4_2_duarouter import run_duarouter_stage
-from matsim_sumo.visualization.boundary import confirm_boundary_preview
 
 
 def resolve_sumo_network_path(config: dict) -> Path:
@@ -96,11 +95,7 @@ def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
     vclasses = tuple(dict.fromkeys(state.config["sumo_vclass_map"].values()))
 
     _run_step("Step 0.1 prepare SUMO network", lambda: run_sumo_network_preprocessing_stage(state, vclasses))
-    _run_step("Step 0.2 generate SUMO boundary", lambda: run_sumo_boundary_stage(state, vclasses))
-    _run_step(
-        "Step 0.3 confirm generated boundary",
-        lambda: confirm_boundary_preview(state.sumo_network_geo, state.boundary_path, state.output_dir),
-    )
+    _run_step("Step 0.2 generate and confirm SUMO boundary", lambda: run_sumo_boundary_stage(state, vclasses))
     _run_step("Step 1.1 boundary cut links", lambda: run_boundary_cut_links_stage(state, projection=network_crs))
     _run_step("Step 1.2 extract MATSim car legs", lambda: run_plans_car_legs_stage(state))
     _run_step("Step 1.3 crossing segments", lambda: run_crossing_segments_stage(state))

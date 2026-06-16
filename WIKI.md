@@ -116,7 +116,7 @@ This improves reproducibility.
 
 ## 6. Boundary Confirmation
 
-During Step 0.3 the pipeline writes a boundary preview.
+During Step 0.2 the pipeline writes a boundary preview after generating the boundary.
 
 ```text
 <output_dir>/plots/sumo_network_boundary_confirmation.png
@@ -137,8 +137,7 @@ If the image does not open automatically, open it manually.
 | Step | Name | Description |
 | --- | --- | --- |
 | 0.1 | Prepare SUMO network | Read the SUMO network and convert valid edges to LV95 geometry. |
-| 0.2 | Generate boundary | Build a boundary from the preprocessed SUMO network. |
-| 0.3 | Confirm boundary | Write a boundary preview and ask the user to confirm it. |
+| 0.2 | Generate boundary | Build the boundary, write a preview, and ask the user to confirm it. |
 | 1.1 | Boundary cut links | Find MATSim network links that cross the generated boundary. |
 | 1.2 | Extract car legs | Read MATSim plans and keep car legs. |
 | 1.3 | Crossing segments | Split crossing legs into inside-boundary route segments. |
