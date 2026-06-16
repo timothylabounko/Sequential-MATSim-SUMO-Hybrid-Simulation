@@ -1,16 +1,14 @@
-# Travel-time analysis settings.
+# Travel-time analysis config.
 # Set the actual API token in the environment as TOMTOM_API_KEY.
 
-data_path: data
+# TomTom
 tomtom_api_key_env: TOMTOM_API_KEY
-tomtom_trips_path: results/run_24_50pct_zurich_boundary_no_trucks/6_combined_trips.csv.gz
-tomtom_sample_size: 1500
-tomtom_sample_seed: 31
-num_tomtom_requests: 1500
-min_trip_distance_km: 3
-sumo_output_dir: /Users/Matteo/Documents/0_ETH/0_Master_Thesis/2_SUMO_Simulation/sumo-env/scenarios/sumo_scenario_euler/output_meso/scale_1.0_100pct
-travel_time_output_dir: results/run_22_50pct
-travel_time_trips_file: 6_combined_trips.csv.gz
+tomtom_daily_request_limit: 2500
+tomtom_save_every: 50
+tomtom_request_delay_s: 0.1
+
+# Random trips
+min_trip_distance_km: 3.0
 travel_time_analysis_dir: travel_times_random
 travel_time_random_trips_file: random_trips_25000.csv
 travel_time_random_trip_count: 25000
@@ -19,4 +17,16 @@ travel_time_departure_end_s: 79200
 travel_time_random_seed: 31
 travel_time_boundary_file: data/boundaries/zurich_boundary.geojson
 travel_time_sumo_vclass: passenger
-tomtom_daily_request_limit: 2500
+
+# MATSim
+matsim_output_dir: data/matsim_output_50pct
+
+# SUMO
+sumo_output_dir: /Users/Matteo/Documents/0_ETH/0_Master_Thesis/2_SUMO_Simulation/sumo-env/scenarios/sumo_scenario_euler/output_meso_50pct_new/scale_1.0_100pct
+
+# SUMO simulation options
+sumo_background_mode: hourly_load_state
+sumo_random_depart_offset_s: 0
+sumo_completion_buffer_s: 7200
+sumo_simulation_begin_s: 18000
+sumo_simulation_end_s: 86400

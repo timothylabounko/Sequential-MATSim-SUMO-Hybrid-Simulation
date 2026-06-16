@@ -2,35 +2,35 @@
 # Copy this file or configs/templates/pipeline.yaml and edit paths for a new run
 
 # MATSim input
-matsim_output_dir: data/inputs_example/matsim
+matsim_output_dir: data/inputs/matsim_output_50pct
 plans_file: output_plans.xml.gz
 trips_file: output_trips.csv.gz
 events_file: output_events.xml.gz
 network_file: output_network.xml.gz
 
 # SUMO input
-sumo_input_dir: data/inputs_example/sumo
-sumo_network_path: network.net.xml
+sumo_input_dir: data/inputs/sumo
+sumo_network_path: VMOD_bahnhof.net.xml
 
 # Step 0: initialization
 modes_keep:
   - car
-boundary_file: data/generated/boundaries/sumo_boundary.geojson
+boundary_file: data/generated/boundaries/zurich_bahnhof_final.geojson
 boundary_force_rebuild: false
 sumo_boundary_network_buffer_m: 35.0
 sumo_boundary_gap_close_m: 150.0
-sumo_boundary_inward_buffer_m: 150.0
+sumo_boundary_inward_buffer_m: 50.0
 sumo_boundary_simplify_m: 40.0
-sumo_boundary_outward_buffer_m: 200.0
+sumo_boundary_outward_buffer_m: 20.0
 
 # Step 1: demand filtering
 segment_endpoint_boundary_tolerance_m: 1.0
 
 # Step 2: demand scaling
 scale_factor: 2.0
-dep_time_jitter_seconds: 3600 # +/- 1 hour
+dep_time_jitter_seconds: 1800 # +/- 30 minutes
 coord_jitter_radius_m: 500.0
-demand_scaling_seed: 35
+demand_scaling_seed: 30
 amenity_kdtree_enabled: true
 amenities_path: data/inputs_example/amenities/locations.csv
 
@@ -56,6 +56,6 @@ sumo_unrouted_trips_file: 4_2_unrouted_trips.xml
 duarouter_log_file: 4_2_duarouter.log
 
 # Output
-output_dir: results/run_34_test
+output_dir: results/run_38_zuerich_bahnhof_final
 write_intermediates: false
 write_review_csv: false
