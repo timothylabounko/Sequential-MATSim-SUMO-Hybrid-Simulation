@@ -13,6 +13,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from matsim_sumo.visualization.plot_style import BOUNDARY_STYLE, NETWORK_STYLE, apply_spatial_axes
+
 
 BOUNDARY_CONFIRMATION_FILENAME = "sumo_network_boundary_confirmation.png"
 BOUNDARY_DECLINED_MESSAGE = "Boundary confirmation declined; pipeline stopped before Step 1 demand filtering."
@@ -46,11 +48,10 @@ def plot_sumo_network_boundary(
     sumo_gdf, boundary_gdf = _align_crs(sumo_gdf, boundary_gdf)
 
     fig, ax = plt.subplots(figsize=(10, 10))
-    sumo_gdf.plot(ax=ax, color="black", linewidth=0.15, alpha=0.7, label="SUMO Network")
-    boundary_gdf.boundary.plot(ax=ax, color="red", linewidth=1.4, label="Boundary")
+    sumo_gdf.plot(ax=ax, label="SUMO network", **NETWORK_STYLE)
+    boundary_gdf.boundary.plot(ax=ax, label="Boundary", **BOUNDARY_STYLE)
     ax.set_title("SUMO Network with Boundary")
-    ax.set_aspect("equal")
-    ax.legend()
+    apply_spatial_axes(ax, sumo_gdf.crs)
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
     return out_path
