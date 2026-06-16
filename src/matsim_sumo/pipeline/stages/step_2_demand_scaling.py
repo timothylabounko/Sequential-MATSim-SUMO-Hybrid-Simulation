@@ -15,30 +15,25 @@ AMENITIES_CSV_SEP = ","
 AMENITIES_X_COL = "x"
 AMENITIES_Y_COL = "y"
 AMENITIES_WEIGHT_COL = "weight"
-DEMAND_SCALING_LOGIC_VERSION = 2
+DEMAND_SCALING_LOGIC_VERSION = 5
 
 
-def _jitter_dep_time(dep_time: pd.Series, jitter_s: int, rng) -> pd.Series:
-    parts = dep_time.astype(str).str.split(":", n=2, expand=True)
-    if parts.shape[1] != 3:
-        return dep_time
+def _jitter_dep_time(dep_time: pd.Series, jitter_s: int, rng) -> tuple[pd.Series, pd.Series]:
+    parts = dep_time.astype(str).str.split(":", n=2, expand=True).reindex(columns=range(3))
     sec = (
         pd.to_numeric(parts[0], errors="coerce") * 3600
         + pd.to_numeric(parts[1], errors="coerce") * 60
         + pd.to_numeric(parts[2], errors="coerce")
     )
-    valid = sec.notna()
-    if not valid.any():
-        return dep_time
-    sec.loc[valid] = (
-        sec.loc[valid] + rng.integers(-jitter_s, jitter_s + 1, int(valid.sum()))
-    ).clip(lower=0)
-    h = (sec // 3600).astype("Int64").astype(str).str.zfill(2)
-    m = ((sec % 3600) // 60).astype("Int64").astype(str).str.zfill(2)
-    s = (sec % 60).astype("Int64").astype(str).str.zfill(2)
+    sec = sec + rng.integers(-jitter_s, jitter_s + 1, len(sec))
+    keep = sec.ge(0) & sec.lt(86400)
+    sec = sec.loc[keep].round().astype(int)
+    h = (sec // 3600).astype(str).str.zfill(2)
+    m = ((sec % 3600) // 60).astype(str).str.zfill(2)
+    s = (sec % 60).astype(str).str.zfill(2)
     out = dep_time.copy()
-    out.loc[valid] = h.loc[valid] + ":" + m.loc[valid] + ":" + s.loc[valid]
-    return out
+    out.loc[keep] = h + ":" + m + ":" + s
+    return out, keep
 
 
 def _jitter_xy(
@@ -67,13 +62,16 @@ def _jitter_xy(
         xy[pos[take], 1] = ay[take]
     miss = ~take
     if miss.any():
-        r = radius_m * np.sqrt(rng.random(int(miss.sum())))
-        a = 2 * np.pi * rng.random(int(miss.sum()))
-        xy[pos[miss], 0] = base[pos[miss], 0] + r * np.cos(a)
-        xy[pos[miss], 1] = base[pos[miss], 1] + r * np.sin(a)
-    if boundary is not None:
-        inside = np.asarray(covers(boundary, points(xy[valid, 0], xy[valid, 1])), dtype=bool)
-        xy[pos[~inside]] = base[pos[~inside]]
+        pending = pos[miss]
+        while len(pending):
+            r = radius_m * np.sqrt(rng.random(len(pending)))
+            a = 2 * np.pi * rng.random(len(pending))
+            xy[pending, 0] = base[pending, 0] + r * np.cos(a)
+            xy[pending, 1] = base[pending, 1] + r * np.sin(a)
+            if boundary is None:
+                break
+            inside = np.asarray(covers(boundary, points(xy[pending, 0], xy[pending, 1])), dtype=bool)
+            pending = pending[~inside]
     df.loc[idx, [x_col, y_col]] = xy
 
 
@@ -122,7 +120,8 @@ def scale_demand(
     father = clones["new_trip_id"].astype("string").str.rsplit("_", n=1).str[0]
     cno = clones.groupby("new_trip_id", sort=False).cumcount().add(1).astype(str)
     clones["new_trip_id"] = father + "_" + cno
-    clones["dep_time"] = _jitter_dep_time(clones["dep_time"], dep_time_jitter_s, rng)
+    clones["dep_time"], keep_dep_time = _jitter_dep_time(clones["dep_time"], dep_time_jitter_s, rng)
+    clones = clones.loc[keep_dep_time].copy()
 
     ctype = clones["crossing_type"].astype(str)
     inside = ctype.eq("inside")

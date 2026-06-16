@@ -8,6 +8,56 @@ from matsim_sumo.pipeline.stages.step_2_demand_scaling import scale_demand
 
 
 class DemandScalingTest(unittest.TestCase):
+    def test_clone_with_negative_jittered_departure_time_is_dropped(self) -> None:
+        combined = pd.DataFrame(
+            {
+                "new_trip_id": ["early_0"],
+                "dep_time": ["00:00:00"],
+                "crossing_type": ["inside"],
+                "start_link": ["a"],
+                "end_link": ["b"],
+                "start_x": [0.0],
+                "start_y": [0.0],
+                "end_x": [1.0],
+                "end_y": [1.0],
+            }
+        )
+
+        scaled = scale_demand(
+            combined,
+            scale_factor=2,
+            dep_time_jitter_s=10,
+            coord_radius_m=0.0,
+            seed=1,
+        )
+
+        self.assertEqual(scaled["new_trip_id"].to_list(), ["early_0"])
+
+    def test_clone_with_departure_time_after_midnight_is_dropped(self) -> None:
+        combined = pd.DataFrame(
+            {
+                "new_trip_id": ["late_0"],
+                "dep_time": ["23:59:55"],
+                "crossing_type": ["inside"],
+                "start_link": ["a"],
+                "end_link": ["b"],
+                "start_x": [0.0],
+                "start_y": [0.0],
+                "end_x": [1.0],
+                "end_y": [1.0],
+            }
+        )
+
+        scaled = scale_demand(
+            combined,
+            scale_factor=2,
+            dep_time_jitter_s=10,
+            coord_radius_m=0.0,
+            seed=0,
+        )
+
+        self.assertEqual(scaled["new_trip_id"].to_list(), ["late_0"])
+
     def test_only_jittered_endpoints_get_reference_links_rematched(self) -> None:
         combined = pd.DataFrame(
             {
