@@ -52,6 +52,62 @@ class WriteSumoTripsXmlTest(unittest.TestCase):
         self.assertEqual(written, 1)
         self.assertIn('id="midnight" depart="00:00:00"', xml)
 
+    def test_prefers_junction_attrs_only_when_present(self) -> None:
+        rows = [
+            {
+                "new_trip_id": "pass",
+                "dep_time": "08:00:00",
+                "from_edge": "e_start",
+                "to_edge": "e_end",
+                "from_junction": "j_start",
+                "to_junction": "j_end",
+            },
+            {
+                "new_trip_id": "entering",
+                "dep_time": "08:01:00",
+                "from_edge": "e_start",
+                "to_edge": "inside_end",
+                "from_junction": "j_start",
+                "to_junction": "",
+            },
+            {
+                "new_trip_id": "leaving",
+                "dep_time": "08:02:00",
+                "from_edge": "inside_start",
+                "to_edge": "e_end",
+                "from_junction": "",
+                "to_junction": "j_end",
+            },
+            {
+                "new_trip_id": "inside",
+                "dep_time": "08:03:00",
+                "from_edge": "inside_start",
+                "to_edge": "inside_end",
+                "from_junction": "",
+                "to_junction": "",
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            csv_path = tmp_path / "matched.csv"
+            xml_path = tmp_path / "trips.xml"
+            fieldnames = ["new_trip_id", "dep_time", "from_edge", "to_edge", "from_junction", "to_junction"]
+            with csv_path.open("w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter=";")
+                writer.writeheader()
+                writer.writerows(rows)
+
+            total, written = write_sumo_trips_xml(csv_path, xml_path)
+            xml = xml_path.read_text(encoding="utf-8")
+
+        self.assertEqual(total, 4)
+        self.assertEqual(written, 4)
+        self.assertIn('id="pass" depart="08:00:00" fromJunction="j_start" toJunction="j_end"', xml)
+        self.assertIn('id="entering" depart="08:01:00" fromJunction="j_start" to="inside_end"', xml)
+        self.assertIn('id="leaving" depart="08:02:00" from="inside_start" toJunction="j_end"', xml)
+        self.assertIn('id="inside" depart="08:03:00" from="inside_start" to="inside_end"', xml)
+
 
 if __name__ == "__main__":
     unittest.main()

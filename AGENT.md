@@ -1,7 +1,7 @@
 # Agent Guide
 
 This file gives repository guidance for coding agents.
-It should be read before modifying the project.
+Read it before modifying the project.
 
 ## Repository Purpose
 
@@ -9,32 +9,43 @@ This repository converts MATSim output into SUMO demand files.
 It is an installable Python package.
 The public command is `matsim-sumo`.
 
-The main user workflow is:
+Primary user workflow:
 
 ```bash
 pip install -e .
 matsim-sumo run --config configs/my_run.yaml
 ```
 
-## Active Package Structure
+`scripts/run_pipeline.py` is only a compatibility wrapper around this command.
 
-The active code is under `src/matsim_sumo`.
+## Active Structure
+
+Active package code is under `src/matsim_sumo`.
 
 ```text
 cli.py                 command line interface
 config/                config loading, defaults, and validation
-pipeline/              runner, state, and numbered stages
+pipeline/              runner, state, statistics, and numbered stages
 network/               SUMO preprocessing and boundary generation
 demand/                demand helper logic
 io/                    file writing and export utilities
 visualization/         plots and diagnostics
-tools/                 secondary analysis commands
+tools/                 secondary utility modules
 utils/                 shared helpers
 resources/shell/       packaged shell helper scripts
 ```
 
+Analysis source code is tracked under `analysis/`.
+
+```text
+analysis/mode_shares/     unnumbered mode-share diagnostics and CLI utilities
+analysis/travel_times/    TomTom/MATSim/SUMO travel-time comparison tools
+analysis/figures/         figure helper scripts
+```
+
 Do not add script-first entry points for normal users.
-Use the package command and Python imports.
+Use the package command, package modules, or analysis modules.
+`scripts/` should contain only `run_pipeline.py`.
 
 ## Pipeline Numbering
 
@@ -43,19 +54,21 @@ Keep the current logical numbering.
 | Step | Meaning |
 | --- | --- |
 | 0 | Initialization |
-| 1 | Demand Filtering |
-| 2 | Demand Scaling |
-| 3 | Map-Matching |
-| 4 | SUMO Trip Generation |
+| 1 | Demand filtering |
+| 2 | Demand scaling |
+| 3 | Map matching |
+| 4 | SUMO trip generation |
 
-Stage modules are named after this numbering.
-Examples are `step_1_4_segment_timing.py` and `step_3_map_matching.py`.
+The numbered steps stop at Step 4 and must match `docs/pipeline_overview.png`.
+Mode-share diagnostics are optional analysis utilities, not numbered pipeline stages.
+
+Stage modules use the 0-4 numbering.
 Console labels, output files, docs, and tests should use the same numbering.
 
 ## Command Entry Points
 
 The main entry point is `src/matsim_sumo/cli.py`.
-It exposes these commands:
+It exposes:
 
 ```text
 matsim-sumo run
@@ -65,23 +78,43 @@ matsim-sumo analyze-mode-shares
 ```
 
 The full pipeline is orchestrated by `src/matsim_sumo/pipeline/runner.py`.
-Shared runtime paths and intermediate tables are stored in `PipelineState`.
+Runtime paths and intermediate tables are stored in `PipelineState`.
 
-## Data Handling
+## Data And Output Policy
 
-Large input data should stay under `data/`.
-Generated outputs should stay under `results/` or configured generated-data folders.
-Do not commit large MATSim or SUMO input files unless explicitly requested.
-Do not commit local cache files.
-Do not commit `__pycache__`.
+Commit source code, tests, docs, config templates/examples, and lightweight reference files.
+Do not commit local MATSim/SUMO inputs, run outputs, caches, generated travel-time tables, TomTom response artifacts, or bytecode.
+The core pipeline must run without amenities or Microcensus files when `amenity_kdtree_enabled: false` and `mode_share_diagnostics_enabled: false`.
+Keep optional diagnostics opt-in.
 
-The default user input layout is:
+Ignored local paths include:
 
 ```text
-data/inputs/matsim
-data/inputs/sumo
-data/inputs/amenities/locations.csv
+data/
+results/
+.cache/
+notebooks/
+analysis/travel_times/*_output_*/
+analysis/travel_times/travel_times_random/
 ```
+
+The bundled MATSim router JAR is tracked intentionally:
+
+```text
+lib/switzerland_run.jar
+```
+
+This JAR is required by travel-time analysis and is not a generated output.
+
+## Configuration Policy
+
+Keep `configs/templates/pipeline.yaml` generic.
+Keep `configs/base_config.yaml` portable and runnable after users prepare `data/inputs/...`.
+Do not commit personal absolute paths in default configs or documentation.
+
+Scenario-specific configs may exist as examples, but they must make local paths explicit as editable placeholders.
+Never commit API keys.
+TomTom keys should be read from `TOMTOM_API_KEY` or another configured environment variable.
 
 ## Editing Rules
 
@@ -97,29 +130,39 @@ Avoid adding empty `__init__.py` files unless they are required.
 
 ## Testing
 
-Run these checks after code or documentation changes that affect imports or commands:
+Run these checks after code, config, or documentation changes that affect imports or commands:
 
 ```bash
 .venv/bin/python -m unittest discover -s tests
-.venv/bin/python -m compileall src tests
+.venv/bin/python -m compileall src analysis tests scripts
+.venv/bin/matsim-sumo --help
 .venv/bin/matsim-sumo run --help
 .venv/bin/matsim-sumo plot-boundary --help
+.venv/bin/python analysis/travel_times/run_traveltime.py --help
+.venv/bin/python analysis/figures/plot_boundary_satellite.py --help
 git diff --check
 ```
 
-Remove generated bytecode after `compileall`.
+Remove generated bytecode after compile checks.
+
+Before committing or pushing, verify:
 
 ```bash
-find . -path './.venv' -prune -o -type d -name '__pycache__' -print -exec rm -rf {} +
+find scripts -maxdepth 1 -type f -print
+git ls-files | rg '(^data/|^results/|__pycache__|\.DS_Store$)'
+git status --short --ignored
 ```
+
+The scripts check should show only `scripts/run_pipeline.py`.
+The `git ls-files` check should return no generated output paths.
 
 ## Documentation
 
 Keep `README.md` short.
-Use it for project summary and orientation.
+Use it for project summary and first-run orientation.
 
 Keep `WIKI.md` detailed.
-Use it for installation, configuration, running, outputs, and troubleshooting.
+Use it for installation, configuration, running, outputs, external tools, analysis, and troubleshooting.
 
 Use short sentences.
 Use scientific and factual tone.

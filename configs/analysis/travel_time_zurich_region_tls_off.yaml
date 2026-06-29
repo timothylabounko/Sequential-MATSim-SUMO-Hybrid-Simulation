@@ -1,0 +1,35 @@
+# Travel-time analysis config for Zurich-region SUMO meso TLS-off output.
+# Copy this file and edit local MATSim/SUMO paths before running.
+# Set the actual API token in the environment as TOMTOM_API_KEY.
+
+# TomTom
+tomtom_api_key_env: TOMTOM_API_KEY
+tomtom_daily_request_limit: 2500
+tomtom_save_every: 50
+tomtom_request_delay_s: 0.1
+
+# Random trips
+min_trip_distance_km: 3.0
+travel_time_analysis_dir: travel_times_random
+travel_time_random_trips_file: random_trips_25000.csv
+travel_time_random_trip_count: 25000
+travel_time_departure_start_s: 18000
+travel_time_departure_end_s: 79200
+travel_time_random_seed: 31
+travel_time_boundary_file: data/boundaries/zurich_boundary.geojson
+travel_time_sumo_vclass: passenger
+
+# MATSim
+matsim_output_dir: data/inputs/matsim
+
+# SUMO
+sumo_output_dir: data/inputs/sumo_outputs/zurich_region_tls_off
+sumo_network_path: data/inputs/sumo/zurich_region_tls_off.net.xml
+sumo_edge_reuse_routes: false
+
+# SUMO simulation options
+sumo_background_mode: hourly_load_state
+sumo_random_depart_offset_s: 0
+sumo_completion_buffer_s: 7200
+sumo_simulation_begin_s: 18000
+sumo_simulation_end_s: 86400

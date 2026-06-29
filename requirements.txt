@@ -9,6 +9,8 @@ pyproj
 matplotlib
 matsim-tools
 numpy
+pillow
+requests
 scipy
 sumolib
 rtree

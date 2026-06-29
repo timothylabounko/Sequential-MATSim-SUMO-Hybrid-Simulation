@@ -1,380 +1,245 @@
 import unittest
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 from shapely.geometry import LineString
 
-from matsim_sumo.pipeline.stages.step_3_map_matching import _apply_endpoint_distance_guardrail, _match_trips
+from matsim_sumo.pipeline.stages.step_3_map_matching import (
+    _apply_endpoint_distance_guardrail,
+    _build_corridor_candidates,
+    _match_trips,
+    _unit_vector_xy,
+)
 
 
-class SumoEndpointGuardrailTest(unittest.TestCase):
-    def test_guardrail_keeps_only_matched_rows_with_both_endpoint_distances_under_limit(self) -> None:
-        matched = pd.DataFrame(
-            {
-                "from_edge": ["a", "b", "c", None],
-                "to_edge": ["x", "y", "z", "w"],
-                "from_edge_dist_m": [50.0, 151.0, 10.0, 20.0],
-                "to_edge_dist_m": [149.0, 10.0, None, 10.0],
-                "crossing_type": ["inside", "entering", "leaving", "pass_through"],
+def _edges(rows: list[tuple[str, str, str, str, str, LineString]]) -> gpd.GeoDataFrame:
+    gdf = gpd.GeoDataFrame(
+        {
+            "edge_id": [r[0] for r in rows],
+            "road_class": [r[1] for r in rows],
+            "sumo_name": [r[2] for r in rows],
+            "from_node": [r[3] for r in rows],
+            "to_node": [r[4] for r in rows],
+        },
+        geometry=[r[5] for r in rows],
+        crs="EPSG:2056",
+    )
+    vec = gdf.geometry.map(lambda g: _unit_vector_xy(g.coords[0][0], g.coords[0][1], g.coords[-1][0], g.coords[-1][1]))
+    gdf["edge_dx"] = vec.map(lambda v: v[0]).to_numpy(dtype=float)
+    gdf["edge_dy"] = vec.map(lambda v: v[1]).to_numpy(dtype=float)
+    return gdf
+
+
+class RouteCorridorStep3Test(unittest.TestCase):
+    def test_coarse_matsim_link_maps_to_forward_sumo_split_edges(self) -> None:
+        edges = _edges(
+            [
+                ("548701320", "secondary", "manessestrasse", "n0", "n1", LineString([(0.0, 0.0), (45.0, 0.0)])),
+                ("39013712#1", "secondary", "manessestrasse", "n1", "n2", LineString([(45.0, 0.0), (100.0, 0.0)])),
+                ("39013713", "secondary", "manessestrasse", "n2", "n1", LineString([(100.0, 2.0), (45.0, 2.0)])),
+                ("24043220", "secondary", "manessestrasse", "n1", "n0", LineString([(45.0, 5.0), (0.0, 5.0)])),
+                ("284105541", "secondary", "manessestrasse", "far0", "far1", LineString([(0.0, 100.0), (100.0, 100.0)])),
+            ]
+        )
+        route_metadata = {
+            "2047316": {
+                "geometry": LineString([(0.0, 0.0), (100.0, 0.0)]),
+                "vx": 1.0,
+                "vy": 0.0,
+                "road_class": "secondary",
+                "osm_id": None,
+                "name_norm": "manessestrasse",
             }
+        }
+
+        candidates = _build_corridor_candidates(route_metadata, edges, radius_m=80.0, min_dot=0.3, road_type_enabled=True)
+        candidate_ids = {c["edge_id"] for c in candidates["2047316"]}
+
+        self.assertEqual(candidate_ids, {"548701320", "39013712#1"})
+        self.assertTrue(all(c["dot"] >= 0.3 for c in candidates["2047316"]))
+
+    def test_boundary_pass_through_emits_junction_endpoints(self) -> None:
+        edges = _edges(
+            [
+                ("548701320", "secondary", "manessestrasse", "cluster_entry", "mid", LineString([(0.0, 0.0), (45.0, 0.0)])),
+                ("39013712#1", "secondary", "manessestrasse", "mid", "cluster_exit", LineString([(45.0, 0.0), (100.0, 0.0)])),
+            ]
+        )
+        candidates = _build_corridor_candidates(
+            {
+                "2047316": {
+                    "geometry": LineString([(0.0, 0.0), (100.0, 0.0)]),
+                    "vx": 1.0,
+                    "vy": 0.0,
+                    "road_class": "secondary",
+                    "osm_id": None,
+                    "name_norm": "manessestrasse",
+                }
+            },
+            edges,
+            radius_m=80.0,
+            min_dot=0.3,
+            road_type_enabled=True,
+        )
+        trips = pd.DataFrame({"trip_id": ["t1"], "crossing_type": ["pass_through"], "route_links": ["2047316"]})
+
+        matched = _match_trips(
+            trips,
+            edges,
+            candidates,
+            start_edge_ids={"548701320", "39013712#1"},
+            end_edge_ids={"548701320", "39013712#1"},
         )
 
-        kept, dropped = _apply_endpoint_distance_guardrail(matched, 150.0)
+        self.assertEqual(matched.iloc[0]["from_edge"], "548701320")
+        self.assertEqual(matched.iloc[0]["to_edge"], "39013712#1")
+        self.assertEqual(matched.iloc[0]["from_junction"], "cluster_entry")
+        self.assertEqual(matched.iloc[0]["to_junction"], "cluster_exit")
+        self.assertEqual(matched.iloc[0]["from_match_policy"], "route_corridor")
+        self.assertTrue(bool(matched.iloc[0]["match_ok"]))
 
-        self.assertEqual(len(kept), 1)
-        self.assertEqual(kept.iloc[0]["from_edge"], "a")
-        self.assertEqual(kept.iloc[0]["sumo_endpoint_max_dist_m"], 149.0)
-        self.assertEqual(len(dropped), 3)
-
-    def test_guardrail_drops_local_activity_endpoint_fallbacks_only(self) -> None:
-        matched = pd.DataFrame(
-            {
-                "from_edge": ["a", "b", "c"],
-                "to_edge": ["x", "y", "z"],
-                "from_edge_dist_m": [10.0, 10.0, 10.0],
-                "to_edge_dist_m": [10.0, 10.0, 10.0],
-                "crossing_type": ["leaving", "pass_through", "entering"],
-                "from_matsim_road_class": ["residential", "residential", "secondary"],
-                "to_matsim_road_class": ["secondary", "residential", "residential"],
-                "from_match_policy": ["fallback_any", "fallback_any", "same_type"],
-                "to_match_policy": ["same_type", "fallback_any", "fallback_any"],
-            }
+    def test_inside_trip_keeps_exact_edge_endpoints(self) -> None:
+        edges = _edges(
+            [
+                ("a", "secondary", "main", "n0", "n1", LineString([(0.0, 0.0), (45.0, 0.0)])),
+                ("b", "secondary", "main", "n1", "n2", LineString([(45.0, 0.0), (100.0, 0.0)])),
+            ]
         )
+        candidates = _build_corridor_candidates(
+            {
+                "route": {
+                    "geometry": LineString([(0.0, 0.0), (100.0, 0.0)]),
+                    "vx": 1.0,
+                    "vy": 0.0,
+                    "road_class": "secondary",
+                    "osm_id": None,
+                    "name_norm": "main",
+                }
+            },
+            edges,
+            radius_m=80.0,
+            min_dot=0.3,
+            road_type_enabled=True,
+        )
+        trips = pd.DataFrame({"trip_id": ["t1"], "crossing_type": ["inside"], "route_links": ["route"]})
 
-        kept, dropped = _apply_endpoint_distance_guardrail(matched, 150.0)
+        matched = _match_trips(trips, edges, candidates, start_edge_ids={"a", "b"}, end_edge_ids={"a", "b"})
 
-        self.assertEqual(kept["from_edge"].to_list(), ["b"])
-        self.assertEqual(dropped["from_edge"].to_list(), ["a", "c"])
-        self.assertTrue(dropped["sumo_local_activity_endpoint_fallback"].all())
+        self.assertEqual(matched.iloc[0]["from_edge"], "a")
+        self.assertEqual(matched.iloc[0]["to_edge"], "b")
+        self.assertTrue(pd.isna(matched.iloc[0]["from_junction"]))
+        self.assertTrue(pd.isna(matched.iloc[0]["to_junction"]))
+        self.assertTrue(bool(matched.iloc[0]["match_ok"]))
 
-    def test_route_sequence_can_override_pruned_boundary_start_edge(self) -> None:
+    def test_unmatched_corridor_is_dropped_not_nearest_fallback_matched(self) -> None:
+        edges = _edges([("near", "secondary", "main", "n0", "n1", LineString([(0.0, 0.0), (10.0, 0.0)]))])
+        trips = pd.DataFrame({"trip_id": ["t1"], "crossing_type": ["pass_through"], "route_links": ["missing"]})
+
+        matched = _match_trips(trips, edges, candidates_by_link={}, start_edge_ids={"near"}, end_edge_ids={"near"})
+        kept, dropped = _apply_endpoint_distance_guardrail(matched)
+
+        self.assertEqual(len(kept), 0)
+        self.assertEqual(len(dropped), 1)
+        self.assertFalse(bool(dropped.iloc[0]["match_ok"]))
+        self.assertTrue(pd.isna(dropped.iloc[0]["from_edge"]))
+        self.assertEqual(dropped.iloc[0]["sumo_match_drop_reason"], "no_start_and_end_corridor_edge")
+
+    def test_inside_trip_without_route_uses_nearest_edges(self) -> None:
+        edges = _edges(
+            [
+                ("start", "residential", "local", "a", "b", LineString([(0.0, 0.0), (10.0, 0.0)])),
+                ("wrong_type", "primary", "main", "x", "y", LineString([(0.0, 0.5), (10.0, 0.5)])),
+                ("wrong_dir", "residential", "local", "b", "a", LineString([(10.0, 1.0), (0.0, 1.0)])),
+                ("end", "residential", "local", "c", "d", LineString([(100.0, 0.0), (110.0, 0.0)])),
+            ]
+        )
         trips = pd.DataFrame(
             {
-                "start_x": [0.0],
-                "start_y": [0.0],
-                "end_x": [10.0],
-                "end_y": [0.0],
-                "crossing_type": ["pass_through"],
-                "route_links": ["252309 2292149 2087056 2087041"],
-                "new_start_link": ["252309"],
-                "new_end_link": ["2087041"],
+                "trip_id": ["t1"],
+                "crossing_type": ["inside"],
+                "route_links": [np.nan],
+                "start_x": [1.0],
+                "start_y": [1.0],
+                "end_x": [101.0],
+                "end_y": [1.0],
+                "start_link": ["m_start"],
+                "end_link": ["m_end"],
             }
         )
-        edges = gpd.GeoDataFrame(
-            {
-                "edge_id": ["135081939", "15091874", "536676260", "536676266#3"],
-                "road_class": ["motorway", "motorway", "motorway", "secondary"],
-                "sumo_name": ["", "", "", ""],
-                "from_node": ["567351494", "567351494", "256030294", "28499471"],
-                "to_node": ["other", "256030294", "28499471", "exit"],
-            },
-            geometry=[
-                LineString([(0.0, 0.0), (1.0, 0.0)]),
-                LineString([(0.0, 1.0), (2.0, 1.0)]),
-                LineString([(2.0, 1.0), (8.0, 1.0)]),
-                LineString([(10.0, 0.0), (11.0, 0.0)]),
-            ],
-            crs="EPSG:2056",
-        )
         metadata = {
-            "252309": {"road_class": "motorway", "osm_id": None, "name_norm": None, "from_node": "entry", "to_node": "567351494", "vx": 1.0, "vy": 0.0},
-            "2292149": {"road_class": "motorway", "osm_id": None, "name_norm": None, "from_node": "567351494", "to_node": "256030294", "vx": 1.0, "vy": 0.0},
-            "2087041": {"road_class": "secondary", "osm_id": None, "name_norm": None, "from_node": "28499471", "to_node": "exit", "vx": 1.0, "vy": 0.0},
+            "m_start": {"vx": 1.0, "vy": 0.0, "road_class": "residential"},
+            "m_end": {"vx": 1.0, "vy": 0.0, "road_class": "residential"},
         }
 
         matched = _match_trips(
             trips,
-            edges=edges,
-            link_vectors={"252309": (1.0, 0.0), "2087041": (1.0, 0.0)},
-            start_edge_ids={"135081939"},
-            end_edge_ids={"536676266#3"},
-            out_neighbors={
-                "135081939": set(),
-                "15091874": {"536676260"},
-                "536676260": {"536676266#3"},
-                "536676266#3": set(),
-            },
-            in_neighbors={
-                "135081939": set(),
-                "15091874": set(),
-                "536676260": {"15091874"},
-                "536676266#3": {"536676260"},
-            },
-            matsim_road_classes={"252309": "motorway", "2087041": "secondary"},
-            matsim_link_metadata=metadata,
+            edges,
+            candidates_by_link={},
+            start_edge_ids={"start", "wrong_type", "wrong_dir", "end"},
+            end_edge_ids={"start", "wrong_type", "wrong_dir", "end"},
+            link_metadata=metadata,
+            inside_max_endpoint_distance_m=20.0,
+            min_dot=0.3,
             road_type_enabled=True,
-            same_type_max_radius_m=150.0,
-            fallback_enabled=True,
-            fallback_max_radius_m=150.0,
-            route_sequence_enabled=True,
-            route_sequence_max_radius_m=150.0,
-            route_sequence_min_dot=0.3,
-        )
-
-        self.assertEqual(matched.iloc[0]["from_edge"], "15091874")
-        self.assertEqual(matched.iloc[0]["from_match_policy"], "route_sequence")
-        self.assertEqual(matched.iloc[0]["from_route_match_link"], "2292149")
-        self.assertEqual(matched.iloc[0]["to_edge"], "536676266#3")
-
-    def test_entering_trip_matches_destination_only_from_reachable_edges(self) -> None:
-        trips = pd.DataFrame(
-            {
-                "start_x": [0.0],
-                "start_y": [0.0],
-                "end_x": [10.0],
-                "end_y": [0.0],
-                "crossing_type": ["entering"],
-                "route_links": [""],
-                "new_start_link": ["start_link"],
-                "new_end_link": ["end_link"],
-            }
-        )
-        edges = gpd.GeoDataFrame(
-            {
-                "edge_id": ["start", "bad_end", "good_end"],
-                "road_class": ["residential", "residential", "residential"],
-                "sumo_name": ["", "", ""],
-                "from_node": ["a", "x", "b"],
-                "to_node": ["b", "y", "c"],
-            },
-            geometry=[
-                LineString([(0.0, 0.0), (1.0, 0.0)]),
-                LineString([(10.0, 0.0), (11.0, 0.0)]),
-                LineString([(12.0, 0.0), (13.0, 0.0)]),
-            ],
-            crs="EPSG:2056",
-        )
-
-        matched = _match_trips(
-            trips,
-            edges=edges,
-            link_vectors={"start_link": (1.0, 0.0), "end_link": (1.0, 0.0)},
-            start_edge_ids={"start"},
-            end_edge_ids={"bad_end", "good_end"},
-            out_neighbors={"start": {"good_end"}, "bad_end": set(), "good_end": set()},
-            in_neighbors={"start": set(), "bad_end": set(), "good_end": {"start"}},
-            matsim_road_classes={"start_link": "residential", "end_link": "residential"},
-            matsim_link_metadata={},
-            road_type_enabled=True,
-            same_type_max_radius_m=150.0,
-            fallback_enabled=True,
-            fallback_max_radius_m=150.0,
-            route_sequence_enabled=False,
-            route_sequence_max_radius_m=150.0,
-            route_sequence_min_dot=0.3,
         )
 
         self.assertEqual(matched.iloc[0]["from_edge"], "start")
-        self.assertEqual(matched.iloc[0]["to_edge"], "good_end")
-        self.assertTrue(bool(matched.iloc[0]["match_ok"]))
-
-    def test_routeable_endpoint_match_can_be_disabled(self) -> None:
-        trips = pd.DataFrame(
-            {
-                "start_x": [0.0],
-                "start_y": [0.0],
-                "end_x": [10.0],
-                "end_y": [0.0],
-                "crossing_type": ["entering"],
-                "route_links": [""],
-                "new_start_link": ["start_link"],
-                "new_end_link": ["end_link"],
-            }
-        )
-        edges = gpd.GeoDataFrame(
-            {
-                "edge_id": ["start", "bad_end", "good_end"],
-                "road_class": ["residential", "residential", "residential"],
-                "sumo_name": ["", "", ""],
-                "from_node": ["a", "x", "b"],
-                "to_node": ["b", "y", "c"],
-            },
-            geometry=[
-                LineString([(0.0, 0.0), (1.0, 0.0)]),
-                LineString([(10.0, 0.0), (11.0, 0.0)]),
-                LineString([(12.0, 0.0), (13.0, 0.0)]),
-            ],
-            crs="EPSG:2056",
-        )
-
-        matched = _match_trips(
-            trips,
-            edges=edges,
-            link_vectors={"start_link": (1.0, 0.0), "end_link": (1.0, 0.0)},
-            start_edge_ids={"start"},
-            end_edge_ids={"bad_end", "good_end"},
-            out_neighbors={"start": {"good_end"}, "bad_end": set(), "good_end": set()},
-            in_neighbors={"start": set(), "bad_end": set(), "good_end": {"start"}},
-            matsim_road_classes={"start_link": "residential", "end_link": "residential"},
-            matsim_link_metadata={},
-            road_type_enabled=True,
-            same_type_max_radius_m=150.0,
-            fallback_enabled=True,
-            fallback_max_radius_m=150.0,
-            route_sequence_enabled=False,
-            route_sequence_max_radius_m=150.0,
-            route_sequence_min_dot=0.3,
-            routeable_endpoints_enabled=False,
-        )
-
-        self.assertEqual(matched.iloc[0]["from_edge"], "start")
-        self.assertEqual(matched.iloc[0]["to_edge"], "bad_end")
-        self.assertTrue(bool(matched.iloc[0]["match_ok"]))
-
-    def test_leaving_trip_matches_start_only_from_edges_reaching_destination(self) -> None:
-        trips = pd.DataFrame(
-            {
-                "start_x": [0.0],
-                "start_y": [0.0],
-                "end_x": [10.0],
-                "end_y": [0.0],
-                "crossing_type": ["leaving"],
-                "route_links": [""],
-                "new_start_link": ["start_link"],
-                "new_end_link": ["end_link"],
-            }
-        )
-        edges = gpd.GeoDataFrame(
-            {
-                "edge_id": ["bad_start", "good_start", "end"],
-                "road_class": ["residential", "residential", "residential"],
-                "sumo_name": ["", "", ""],
-                "from_node": ["x", "a", "b"],
-                "to_node": ["y", "b", "c"],
-            },
-            geometry=[
-                LineString([(0.0, 0.0), (1.0, 0.0)]),
-                LineString([(2.0, 0.0), (3.0, 0.0)]),
-                LineString([(10.0, 0.0), (11.0, 0.0)]),
-            ],
-            crs="EPSG:2056",
-        )
-
-        matched = _match_trips(
-            trips,
-            edges=edges,
-            link_vectors={"start_link": (1.0, 0.0), "end_link": (1.0, 0.0)},
-            start_edge_ids={"bad_start", "good_start"},
-            end_edge_ids={"end"},
-            out_neighbors={"bad_start": set(), "good_start": {"end"}, "end": set()},
-            in_neighbors={"bad_start": set(), "good_start": set(), "end": {"good_start"}},
-            matsim_road_classes={"start_link": "residential", "end_link": "residential"},
-            matsim_link_metadata={},
-            road_type_enabled=True,
-            same_type_max_radius_m=150.0,
-            fallback_enabled=True,
-            fallback_max_radius_m=150.0,
-            route_sequence_enabled=False,
-            route_sequence_max_radius_m=150.0,
-            route_sequence_min_dot=0.3,
-        )
-
-        self.assertEqual(matched.iloc[0]["from_edge"], "good_start")
         self.assertEqual(matched.iloc[0]["to_edge"], "end")
+        self.assertEqual(matched.iloc[0]["from_match_policy"], "inside_nearest")
+        self.assertEqual(matched.iloc[0]["to_match_policy"], "inside_nearest")
+        self.assertTrue(pd.isna(matched.iloc[0]["from_junction"]))
+        self.assertTrue(pd.isna(matched.iloc[0]["to_junction"]))
         self.assertTrue(bool(matched.iloc[0]["match_ok"]))
 
-    def test_inside_trip_matches_destination_only_from_reachable_edges(self) -> None:
-        trips = pd.DataFrame(
-            {
-                "start_x": [0.0],
-                "start_y": [0.0],
-                "end_x": [10.0],
-                "end_y": [0.0],
-                "crossing_type": ["inside"],
-                "route_links": [""],
-                "new_start_link": ["start_link"],
-                "new_end_link": ["end_link"],
-            }
-        )
-        edges = gpd.GeoDataFrame(
-            {
-                "edge_id": ["start", "bad_end", "good_end"],
-                "road_class": ["residential", "residential", "residential"],
-                "sumo_name": ["", "", ""],
-                "from_node": ["a", "x", "b"],
-                "to_node": ["b", "y", "c"],
-            },
-            geometry=[
-                LineString([(0.0, 0.0), (1.0, 0.0)]),
-                LineString([(10.0, 0.0), (11.0, 0.0)]),
-                LineString([(12.0, 0.0), (13.0, 0.0)]),
-            ],
-            crs="EPSG:2056",
-        )
+    def test_inside_trip_without_usable_points_is_dropped_with_clear_reason(self) -> None:
+        edges = _edges([("near", "secondary", "main", "n0", "n1", LineString([(0.0, 0.0), (10.0, 0.0)]))])
+        trips = pd.DataFrame({"trip_id": ["t1"], "crossing_type": ["inside"], "route_links": [np.nan]})
 
-        matched = _match_trips(
-            trips,
-            edges=edges,
-            link_vectors={"start_link": (1.0, 0.0), "end_link": (1.0, 0.0)},
-            start_edge_ids={"start"},
-            end_edge_ids={"bad_end", "good_end"},
-            out_neighbors={"start": {"good_end"}, "bad_end": set(), "good_end": set()},
-            in_neighbors={"start": set(), "bad_end": set(), "good_end": {"start"}},
-            matsim_road_classes={"start_link": "residential", "end_link": "residential"},
-            matsim_link_metadata={},
-            road_type_enabled=True,
-            same_type_max_radius_m=150.0,
-            fallback_enabled=True,
-            fallback_max_radius_m=150.0,
-            route_sequence_enabled=False,
-            route_sequence_max_radius_m=150.0,
-            route_sequence_min_dot=0.3,
-        )
+        matched = _match_trips(trips, edges, candidates_by_link={}, start_edge_ids={"near"}, end_edge_ids={"near"})
 
-        self.assertEqual(matched.iloc[0]["from_edge"], "start")
-        self.assertEqual(matched.iloc[0]["to_edge"], "good_end")
-        self.assertTrue(bool(matched.iloc[0]["match_ok"]))
-
-    def test_routeable_endpoint_match_leaves_trip_unmatched_when_no_candidate_exists(self) -> None:
-        trips = pd.DataFrame(
-            {
-                "start_x": [0.0],
-                "start_y": [0.0],
-                "end_x": [10.0],
-                "end_y": [0.0],
-                "crossing_type": ["entering"],
-                "route_links": [""],
-                "new_start_link": ["start_link"],
-                "new_end_link": ["end_link"],
-            }
-        )
-        edges = gpd.GeoDataFrame(
-            {
-                "edge_id": ["start", "bad_end"],
-                "road_class": ["residential", "residential"],
-                "sumo_name": ["", ""],
-                "from_node": ["a", "x"],
-                "to_node": ["b", "y"],
-            },
-            geometry=[
-                LineString([(0.0, 0.0), (1.0, 0.0)]),
-                LineString([(10.0, 0.0), (11.0, 0.0)]),
-            ],
-            crs="EPSG:2056",
-        )
-
-        matched = _match_trips(
-            trips,
-            edges=edges,
-            link_vectors={"start_link": (1.0, 0.0), "end_link": (1.0, 0.0)},
-            start_edge_ids={"start"},
-            end_edge_ids={"bad_end"},
-            out_neighbors={"start": set(), "bad_end": set()},
-            in_neighbors={"start": set(), "bad_end": set()},
-            matsim_road_classes={"start_link": "residential", "end_link": "residential"},
-            matsim_link_metadata={},
-            road_type_enabled=True,
-            same_type_max_radius_m=150.0,
-            fallback_enabled=True,
-            fallback_max_radius_m=150.0,
-            route_sequence_enabled=False,
-            route_sequence_max_radius_m=150.0,
-            route_sequence_min_dot=0.3,
-        )
-
-        self.assertEqual(matched.iloc[0]["from_edge"], "start")
-        self.assertTrue(pd.isna(matched.iloc[0]["to_edge"]))
         self.assertFalse(bool(matched.iloc[0]["match_ok"]))
+        self.assertEqual(matched.iloc[0]["sumo_match_drop_reason"], "inside_nearest_unmatched")
+
+    def test_short_pass_through_filter_drops_by_distance_only(self) -> None:
+        matched = pd.DataFrame(
+            {
+                "from_edge": ["a", "b", "c"],
+                "to_edge": ["x", "y", "z"],
+                "from_match_dist_m": [0.0, 0.0, 0.0],
+                "to_match_dist_m": [0.0, 0.0, 0.0],
+                "crossing_type": ["pass_through", "pass_through", "entering"],
+                "route_link_count": [3, 8, 3],
+                "route_length_m": [900.0, 2000.0, 900.0],
+            }
+        )
+
+        kept, dropped = _apply_endpoint_distance_guardrail(
+            matched,
+            min_pass_through_route_distance_m=1000.0,
+        )
+
+        self.assertEqual(kept["from_edge"].to_list(), ["b", "c"])
+        self.assertEqual(dropped.iloc[0]["sumo_match_drop_reason"], "short_pass_through_distance")
+
+    def test_same_junction_pass_through_is_dropped(self) -> None:
+        matched = pd.DataFrame(
+            {
+                "from_edge": ["a", "b"],
+                "to_edge": ["x", "y"],
+                "from_junction": ["j1", "j2"],
+                "to_junction": ["j1", "j3"],
+                "from_match_dist_m": [0.0, 0.0],
+                "to_match_dist_m": [0.0, 0.0],
+                "crossing_type": ["pass_through", "pass_through"],
+                "route_length_m": [1000.0, 1000.0],
+            }
+        )
+
+        kept, dropped = _apply_endpoint_distance_guardrail(matched)
+
+        self.assertEqual(kept["from_edge"].to_list(), ["b"])
+        self.assertEqual(dropped.iloc[0]["sumo_match_drop_reason"], "same_boundary_junction_pass_through")
 
 
 if __name__ == "__main__":

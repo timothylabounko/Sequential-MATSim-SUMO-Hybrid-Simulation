@@ -13,7 +13,22 @@ notebooks/
 *.net.xml*
 *.rou.xml*
 *.trip.xml*
-/analysis/
+
+# Analysis source is tracked. Generated analysis runs stay local.
+analysis/travel_times/*_output_*/
+analysis/travel_times/travel_times_random/
+analysis/travel_times/**/plots/
+analysis/travel_times/**/plots_*/
+analysis/travel_times/**/sumo/
+analysis/travel_times/**/sumo_edge_estimate/
+analysis/travel_times/**/*.csv
+analysis/travel_times/**/*.json
+analysis/travel_times/**/*.geojson
+analysis/travel_times/**/*.xml
+analysis/travel_times/**/*.xml.gz
+analysis/travel_times/**/*.log
+docs/step3_methodology.png
+docs/step3_methodology.pdf
 
 # Python + environment
 .venv/
@@ -25,3 +40,7 @@ __pycache__/
 .DS_Store
 .vscode/
 .idea/
+
+# Feedback
+/FEEDBACK.md
+/Feedback.md

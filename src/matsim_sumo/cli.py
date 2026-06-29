@@ -11,6 +11,10 @@ import warnings
 from pathlib import Path
 from typing import Sequence
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 
 def _write_review_csv(source_path: Path) -> Path:
     source = Path(source_path)
@@ -93,6 +97,11 @@ def _run_pipeline(argv: Sequence[str]) -> int:
         print(f"Wrote duarouter log to {state.duarouter_log_path}")
     else:
         print("Skipped duarouter routing (run_duarouter: false)")
+    if stats.get("mode_share_diagnostics_enabled"):
+        print(f"Wrote {stats['mode_share_outputs']} mode-share diagnostic files to {state.output_dir / 'plots'}")
+    else:
+        print("Skipped mode-share diagnostics (mode_share_diagnostics_enabled: false)")
+    print(f"Wrote scenario statistics to {state.scenario_stats_path}")
 
     if config["write_review_csv"]:
         for path in (
@@ -113,7 +122,7 @@ def _delegate(command: str, argv: Sequence[str]) -> int:
     modules = {
         "plot-boundary": "matsim_sumo.visualization.sumo_network_boundary",
         "export-routes": "matsim_sumo.io.qgis_export",
-        "analyze-mode-shares": "matsim_sumo.tools.mode_shares",
+        "analyze-mode-shares": "analysis.mode_shares.cli",
     }
     module_name = modules[command]
     module = __import__(module_name, fromlist=["main"])

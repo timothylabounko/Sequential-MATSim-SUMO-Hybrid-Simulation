@@ -85,6 +85,7 @@ def run_duarouter_stage(state: PipelineState) -> None:
         str(sampled_trips_path),
         "-o",
         str(state.sumo_routes_path),
+        "--junction-taz",
         "--ignore-errors",
         "true",
         "--no-step-log",

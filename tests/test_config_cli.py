@@ -41,14 +41,10 @@ def _minimal_config() -> dict:
         "sumo_network_lv95_tmp_file": "data/tmp/sumo_network_lv95.geojson",
         "sumo_vclass_map": {"car": "passenger"},
         "sumo_match_road_type_enabled": True,
-        "sumo_match_same_type_max_radius_m": 150.0,
-        "sumo_match_fallback_enabled": True,
-        "sumo_match_fallback_max_radius_m": 150.0,
-        "sumo_match_route_sequence_enabled": True,
-        "sumo_match_route_sequence_max_radius_m": 150.0,
-        "sumo_match_route_sequence_min_dot": 0.3,
-        "sumo_match_routeable_endpoints_enabled": True,
-        "max_sumo_endpoint_distance_m": 150.0,
+        "sumo_match_corridor_radius_m": 80.0,
+        "sumo_match_min_dot": 0.3,
+        "sumo_match_inside_max_endpoint_distance_m": 150.0,
+        "sumo_match_pass_through_min_route_distance_m": 0.0,
         "run_duarouter": False,
         "duarouter_bin": "duarouter",
         "sumo_routes_file": "4_2_sumo_routes.rou.xml",
@@ -80,6 +76,7 @@ class ConfigCliTest(unittest.TestCase):
         self.assertEqual(state.scaled_trips_path, Path("results/test/2_scaled_trips.csv.gz"))
         self.assertEqual(state.scaled_trips_matched_path, Path("results/test/3_matched_trips.csv.gz"))
         self.assertEqual(state.sumo_trips_path, Path("results/test/4_1_sumo_trips.xml"))
+        self.assertEqual(state.scenario_stats_path, Path("results/test/scenario_stats.csv"))
 
     def test_custom_generated_artifact_paths_are_preserved(self) -> None:
         cfg = _minimal_config()

@@ -173,7 +173,7 @@ def _save_density_comparison(
             net_gdf,
             boundary_gdf,
             data[dataset],
-            f"{dataset} End Point Density",
+            f"{dataset} end point density",
             ENDPOINT_DENSITY_COLOR,
             extent,
             norm,
@@ -185,8 +185,7 @@ def _save_density_comparison(
     if last_hb is not None:
         cbar = fig.colorbar(last_hb, cax=cax)
         cbar.set_label("Trips per hexagon (log scale)")
-    fig.suptitle("Trip End Point Density with Boundary and SUMO Network", y=0.98)
-    fig.subplots_adjust(top=0.86)
+    fig.subplots_adjust(top=0.94)
     for out_path in out_paths:
         fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)

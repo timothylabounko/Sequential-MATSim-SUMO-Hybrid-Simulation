@@ -2,6 +2,7 @@ from pathlib import Path
 from time import perf_counter
 
 from matsim_sumo.config.defaults import default_extract_events_script_path
+from matsim_sumo.pipeline.scenario_stats import run_scenario_stats_helper
 from matsim_sumo.pipeline.state import PipelineState
 from matsim_sumo.pipeline.stages.step_0_1_prepare_sumo_network import run_sumo_network_preprocessing_stage
 from matsim_sumo.pipeline.stages.step_0_2_generate_boundary import run_sumo_boundary_stage
@@ -15,6 +16,7 @@ from matsim_sumo.pipeline.stages.step_2_demand_scaling import run_demand_scaling
 from matsim_sumo.pipeline.stages.step_3_map_matching import run_match_sumo_edges_stage
 from matsim_sumo.pipeline.stages.step_4_1_write_sumo_trips import run_write_sumo_trips_xml_stage
 from matsim_sumo.pipeline.stages.step_4_2_duarouter import run_duarouter_stage
+from analysis.mode_shares.diagnostics import run_mode_share_diagnostics
 
 
 def resolve_sumo_network_path(config: dict) -> Path:
@@ -82,10 +84,11 @@ def build_pipeline_state(config: dict) -> PipelineState:
         sumo_routes_path=output_dir / config["sumo_routes_file"],
         sumo_unrouted_trips_path=output_dir / config["sumo_unrouted_trips_file"],
         duarouter_log_path=output_dir / config["duarouter_log_file"],
+        scenario_stats_path=output_dir / "scenario_stats.csv",
     )
 
 
-def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
+def run_pipeline_steps(state: PipelineState) -> dict[str, int | float | str | bool]:
     def _run_step(label: str, fn) -> None:
         t0 = perf_counter()
         fn()
@@ -114,6 +117,15 @@ def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
         _run_step("Step 4.2 duarouter routing", lambda: run_duarouter_stage(state))
     else:
         print("✔ Step 4.2 duarouter routing skipped (run_duarouter: false)")
+    mode_share_diagnostics_enabled = bool(state.config.get("mode_share_diagnostics_enabled", False))
+    if mode_share_diagnostics_enabled:
+        _run_step("Mode-share diagnostics", lambda: run_mode_share_diagnostics(state))
+    else:
+        state.mode_share_outputs = []
+        print("✔ Mode-share diagnostics skipped (mode_share_diagnostics_enabled: false)")
+    t0 = perf_counter()
+    run_scenario_stats_helper(state)
+    print(f"✔ Scenario statistics written in {perf_counter() - t0:.2f}s")
 
     return {
         "cut_links": len(state.cut_link_ids),
@@ -134,6 +146,9 @@ def run_pipeline_steps(state: PipelineState) -> dict[str, int]:
         "sumo_routes_pct": float(state.sumo_routes_pct or 0.0),
         "sumo_unrouted_rows": int(state.sumo_unrouted_count or 0),
         "sumo_unrouted_pct": float(state.sumo_unrouted_pct or 0.0),
+        "mode_share_diagnostics_enabled": mode_share_diagnostics_enabled,
+        "mode_share_outputs": len(state.mode_share_outputs or []),
+        "scenario_stats_path": str(state.scenario_stats_path),
     }
 
 

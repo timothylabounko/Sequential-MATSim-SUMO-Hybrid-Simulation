@@ -21,6 +21,8 @@ dependencies = [
     "matplotlib",
     "matsim-tools",
     "numpy",
+    "pillow",
+    "requests",
     "scipy",
     "sumolib",
     "rtree",
@@ -33,7 +35,8 @@ dependencies = [
 matsim-sumo = "matsim_sumo.cli:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src", "."]
+include = ["matsim_sumo*", "analysis*"]
 namespaces = true
 
 [tool.setuptools.package-data]

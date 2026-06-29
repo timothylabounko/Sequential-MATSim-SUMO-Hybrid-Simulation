@@ -32,14 +32,10 @@ REQUIRED_CONFIG_KEYS = {
     "sumo_boundary_outward_buffer_m",
     "segment_endpoint_boundary_tolerance_m",
     "sumo_match_road_type_enabled",
-    "sumo_match_same_type_max_radius_m",
-    "sumo_match_fallback_enabled",
-    "sumo_match_fallback_max_radius_m",
-    "sumo_match_route_sequence_enabled",
-    "sumo_match_route_sequence_max_radius_m",
-    "sumo_match_route_sequence_min_dot",
-    "sumo_match_routeable_endpoints_enabled",
-    "max_sumo_endpoint_distance_m",
+    "sumo_match_corridor_radius_m",
+    "sumo_match_min_dot",
+    "sumo_match_inside_max_endpoint_distance_m",
+    "sumo_match_pass_through_min_route_distance_m",
 }
 
 

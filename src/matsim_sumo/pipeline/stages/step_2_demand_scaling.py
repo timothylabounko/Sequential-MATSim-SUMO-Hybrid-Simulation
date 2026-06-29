@@ -15,6 +15,7 @@ AMENITIES_CSV_SEP = ","
 AMENITIES_X_COL = "x"
 AMENITIES_Y_COL = "y"
 AMENITIES_WEIGHT_COL = "weight"
+DAY_SECONDS = 24 * 3600
 DEMAND_SCALING_LOGIC_VERSION = 5
 
 
@@ -26,7 +27,7 @@ def _jitter_dep_time(dep_time: pd.Series, jitter_s: int, rng) -> tuple[pd.Series
         + pd.to_numeric(parts[2], errors="coerce")
     )
     sec = sec + rng.integers(-jitter_s, jitter_s + 1, len(sec))
-    keep = sec.ge(0) & sec.lt(86400)
+    keep = sec.ge(0) & sec.lt(DAY_SECONDS)
     sec = sec.loc[keep].round().astype(int)
     h = (sec // 3600).astype(str).str.zfill(2)
     m = ((sec % 3600) // 60).astype(str).str.zfill(2)

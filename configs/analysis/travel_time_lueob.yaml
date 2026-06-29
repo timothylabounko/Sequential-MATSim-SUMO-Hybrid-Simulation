@@ -1,4 +1,5 @@
-# Travel-time analysis config.
+# Travel-time analysis config for a LUEOB-area scenario.
+# Copy this file and edit local MATSim/SUMO paths before running.
 # Set the actual API token in the environment as TOMTOM_API_KEY.
 
 # TomTom
@@ -19,10 +20,11 @@ travel_time_boundary_file: data/boundaries/loeb_boundary.geojson
 travel_time_sumo_vclass: passenger
 
 # MATSim
-matsim_output_dir: data/matsim_output_50pct
+matsim_output_dir: data/inputs/matsim
 
 # SUMO
-sumo_output_dir: data/loeb_scenario
+sumo_output_dir: data/inputs/sumo_outputs/lueob
+sumo_network_path: data/inputs/sumo/lueob.net.xml
 
 # SUMO simulation options
 sumo_background_mode: hourly_load_state

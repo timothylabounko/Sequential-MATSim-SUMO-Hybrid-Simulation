@@ -1,0 +1,37 @@
+# Travel-time analysis config for SUMO-routable Sihlhoelzli trips with route length >= 2 km.
+# Copy this file and edit local MATSim/SUMO paths before running.
+# Set the actual API token in the environment as TOMTOM_API_KEY.
+
+# TomTom
+tomtom_api_key_env: TOMTOM_API_KEY
+tomtom_daily_request_limit: 5000
+tomtom_save_every: 50
+tomtom_request_delay_s: 0.1
+
+# Random trips
+min_trip_distance_km: 2.0
+travel_time_analysis_dir: .
+travel_time_random_trips_file: 4_output_scenario_sihlhoezli/random_trips_5000_sihlhoezli_min2km_sumo_routable.csv
+travel_time_random_trip_count: 5000
+travel_time_departure_start_s: 18000
+travel_time_departure_end_s: 79200
+travel_time_random_seed: 31
+travel_time_boundary_file: analysis/travel_times/4_output_scenario_sihlhoezli/sihlhoelzli_boundary_lv95.geojson
+travel_time_sumo_vclass: passenger
+
+# MATSim
+matsim_output_dir: data/inputs/matsim
+matsim_config_file: analysis/travel_times/4_output_scenario_sihlhoezli/router_config_50pct.xml
+matsim_router_java_xmx: 32g
+
+# SUMO
+sumo_output_dir: data/inputs/sumo_outputs/sihlhoelzli
+sumo_network_path: data/inputs/sumo/sihlhoelzli.net.xml
+duarouter_bin: duarouter
+
+# SUMO simulation options
+sumo_background_mode: hourly_load_state
+sumo_random_depart_offset_s: 0
+sumo_completion_buffer_s: 7200
+sumo_simulation_begin_s: 18000
+sumo_simulation_end_s: 86400

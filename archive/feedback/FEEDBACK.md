@@ -105,7 +105,7 @@ The example pipeline was run locally on macOS using a MacBook Pro with an M5 chi
 The example data folder was:
 
 ```text
-/Users/konstantinmoser/Documents/Privat/Matti/data/inputs_example
+/path/to/local/data/inputs_example
 ```
 
 The data folder was linked into the repository with:

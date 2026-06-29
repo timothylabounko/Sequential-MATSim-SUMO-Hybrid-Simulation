@@ -1,4 +1,5 @@
-# Travel-time analysis config.
+# Travel-time analysis config for a Bahnhof-area scenario.
+# Copy this file and edit local MATSim/SUMO paths before running.
 # Set the actual API token in the environment as TOMTOM_API_KEY.
 
 # TomTom
@@ -19,10 +20,11 @@ travel_time_boundary_file: data/boundaries/zurich_bahnhof_boundary_tight5.geojso
 travel_time_sumo_vclass: passenger
 
 # MATSim
-matsim_output_dir: data/matsim_output_50pct
+matsim_output_dir: data/inputs/matsim
 
 # SUMO
-sumo_output_dir: /Users/Matteo/Documents/0_ETH/0_Master_Thesis/2_SUMO_Simulation/sumo-env/scenarios/sumo_scenario_euler/output_micro_zuerich_bahnhof/20260609_152136_hourly_100pct
+sumo_output_dir: data/inputs/sumo_outputs/bahnhof
+sumo_network_path: data/inputs/sumo/bahnhof.net.xml
 
 # SUMO simulation options
 sumo_background_mode: hourly_load_state

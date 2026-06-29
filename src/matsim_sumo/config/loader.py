@@ -20,6 +20,11 @@ def apply_defaults(config: dict[str, Any]) -> dict[str, Any]:
     out = dict(config)
     out.setdefault("csv_gzip_compresslevel", 1)
     out.setdefault("extract_events_script", str(default_extract_events_script_path()))
+    out.setdefault("sumo_match_road_type_enabled", True)
+    out.setdefault("sumo_match_corridor_radius_m", 80.0)
+    out.setdefault("sumo_match_min_dot", 0.3)
+    out.setdefault("sumo_match_inside_max_endpoint_distance_m", 150.0)
+    out.setdefault("sumo_match_pass_through_min_route_distance_m", 0.0)
     return out
 
 

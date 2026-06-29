@@ -35,6 +35,7 @@ class PipelineState:
     sumo_routes_path: Path
     sumo_unrouted_trips_path: Path
     duarouter_log_path: Path
+    scenario_stats_path: Path
 
     match_sumo_edges_script_path: Optional[Path] = None
     boundary: Any = None
@@ -67,3 +68,5 @@ class PipelineState:
     sumo_routes_pct: Optional[float] = None
     sumo_unrouted_count: Optional[int] = None
     sumo_unrouted_pct: Optional[float] = None
+    mode_share_outputs: Optional[list[Path]] = None
+    scenario_stats: Optional[pd.DataFrame] = None

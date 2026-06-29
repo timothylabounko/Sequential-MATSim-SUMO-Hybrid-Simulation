@@ -1,8 +1,8 @@
-# Default local pipeline config
-# Copy this file or configs/templates/pipeline.yaml and edit paths for a new run
+# Default portable pipeline config.
+# Copy this file or configs/templates/pipeline.yaml and edit paths for a new run.
 
 # MATSim input
-matsim_output_dir: data/inputs/matsim_output_50pct
+matsim_output_dir: data/inputs/matsim
 plans_file: output_plans.xml.gz
 trips_file: output_trips.csv.gz
 events_file: output_events.xml.gz
@@ -10,52 +10,52 @@ network_file: output_network.xml.gz
 
 # SUMO input
 sumo_input_dir: data/inputs/sumo
-sumo_network_path: VMOD_bahnhof.net.xml
+sumo_network_path: scenario.net.xml
 
 # Step 0: initialization
 modes_keep:
   - car
-boundary_file: data/generated/boundaries/zurich_bahnhof_final.geojson
+boundary_file: data/generated/boundaries/generated_boundary.geojson
 boundary_force_rebuild: false
 sumo_boundary_network_buffer_m: 35.0
 sumo_boundary_gap_close_m: 150.0
-sumo_boundary_inward_buffer_m: 50.0
+sumo_boundary_inward_buffer_m: 30.0
 sumo_boundary_simplify_m: 40.0
-sumo_boundary_outward_buffer_m: 20.0
+sumo_boundary_outward_buffer_m: 5.0
 
 # Step 1: demand filtering
 segment_endpoint_boundary_tolerance_m: 1.0
 
 # Step 2: demand scaling
-scale_factor: 2.0
-dep_time_jitter_seconds: 1800 # +/- 30 minutes
+scale_factor: 1.0
+dep_time_jitter_seconds: 3600
 coord_jitter_radius_m: 500.0
-demand_scaling_seed: 30
-amenity_kdtree_enabled: true
-amenities_path: data/inputs_example/amenities/locations.csv
+demand_scaling_seed: 35
+amenity_kdtree_enabled: false
+amenities_path: data/inputs/amenities/locations.csv
 
-# Step 3: map-matching
-sumo_network_lv95_tmp_file: data/generated/sumo_network_lv95/sumo_lv95.geojson
+# Step 3: map matching
+sumo_network_lv95_tmp_file: data/tmp/sumo_network_lv95.geojson
 sumo_vclass_map:
   car: passenger
 sumo_match_road_type_enabled: true
-sumo_match_same_type_max_radius_m: 150.0
-sumo_match_fallback_enabled: true
-sumo_match_fallback_max_radius_m: 150.0
-sumo_match_route_sequence_enabled: true
-sumo_match_route_sequence_max_radius_m: 150.0
-sumo_match_route_sequence_min_dot: 0.3
-sumo_match_routeable_endpoints_enabled: false
-max_sumo_endpoint_distance_m: 150.0
+sumo_match_corridor_radius_m: 80.0
+sumo_match_min_dot: 0.3
+sumo_match_inside_max_endpoint_distance_m: 150.0
+sumo_match_pass_through_min_route_distance_m: 0.0
 
 # Step 4: SUMO trip generation
 run_duarouter: false
-duarouter_bin: /Users/Matteo/Documents/0_ETH/0_Master_Thesis/2_SUMO_Simulation/sumo-env/bin/duarouter
+duarouter_bin: duarouter
+sumo_trips_file: 4_1_sumo_trips.xml
 sumo_routes_file: 4_2_sumo_routes.rou.xml
 sumo_unrouted_trips_file: 4_2_unrouted_trips.xml
 duarouter_log_file: 4_2_duarouter.log
 
+# Optional diagnostics outside the numbered pipeline
+mode_share_diagnostics_enabled: false
+
 # Output
-output_dir: results/run_38_zuerich_bahnhof_final
+output_dir: results/my_run
 write_intermediates: false
 write_review_csv: false

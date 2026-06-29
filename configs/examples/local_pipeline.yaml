@@ -1,17 +1,18 @@
-# Local example copied from the existing Zurich Bahnhof run settings.
+# Example local pipeline config.
+# Copy this file and edit the data paths for a concrete scenario.
 
-matsim_output_dir: data/matsim_output_50pct
+matsim_output_dir: data/inputs/matsim
 plans_file: output_plans.xml.gz
 trips_file: output_trips.csv.gz
 events_file: output_events.xml.gz
 network_file: output_network.xml.gz
 
-sumo_input_dir: data/zuerich_bahnhof_scenario
-sumo_network_path: zuerich_bahnhof.net.xml
+sumo_input_dir: data/inputs/sumo
+sumo_network_path: scenario.net.xml
 
 modes_keep:
   - car
-boundary_file: data/boundaries/zurich_bahnhof_boundary_tight5.geojson
+boundary_file: data/generated/boundaries/example_boundary.geojson
 boundary_force_rebuild: false
 sumo_boundary_network_buffer_m: 35.0
 sumo_boundary_gap_close_m: 150.0
@@ -25,27 +26,25 @@ dep_time_jitter_seconds: 3600
 coord_jitter_radius_m: 500.0
 demand_scaling_seed: 35
 amenity_kdtree_enabled: true
-amenities_path: data/Amenities_Location/locations.csv
+amenities_path: data/inputs/amenities/locations.csv
 
-sumo_network_lv95_tmp_file: data/tmp/0_sumo_network_zuerich_bahnhof_lv95.geojson
+sumo_network_lv95_tmp_file: data/tmp/sumo_network_lv95.geojson
 sumo_vclass_map:
   car: passenger
 sumo_match_road_type_enabled: true
-sumo_match_same_type_max_radius_m: 150.0
-sumo_match_fallback_enabled: true
-sumo_match_fallback_max_radius_m: 150.0
-sumo_match_route_sequence_enabled: true
-sumo_match_route_sequence_max_radius_m: 150.0
-sumo_match_route_sequence_min_dot: 0.3
-sumo_match_routeable_endpoints_enabled: true
-max_sumo_endpoint_distance_m: 150.0
+sumo_match_corridor_radius_m: 80.0
+sumo_match_min_dot: 0.3
+sumo_match_inside_max_endpoint_distance_m: 150.0
+sumo_match_pass_through_min_route_distance_m: 0.0
 
 run_duarouter: false
-duarouter_bin: /Users/Matteo/Documents/0_ETH/0_Master_Thesis/2_SUMO_Simulation/sumo-env/bin/duarouter
+duarouter_bin: duarouter
 sumo_routes_file: 4_2_sumo_routes.rou.xml
 sumo_unrouted_trips_file: 4_2_unrouted_trips.xml
 duarouter_log_file: 4_2_duarouter.log
 
-output_dir: results/run_32_zuerich_bahnhof
+mode_share_diagnostics_enabled: false
+
+output_dir: results/example_run
 write_intermediates: false
 write_review_csv: false
