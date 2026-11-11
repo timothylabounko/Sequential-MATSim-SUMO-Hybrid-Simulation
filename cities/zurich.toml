@@ -1,0 +1,51 @@
+# City configuration for scripts/mac_zero_teleport_pipeline.sh: the Zurich case study.
+# For another city, copy this file and change the values. Paths may start with ~; relative paths
+# are read from this folder, and the MATSim file names from inputs.matsim_dir.
+
+[city]
+name = "zurich"
+# Time zone of the simulated morning; the Google travel times are requested for it.
+timezone = "Europe/Zurich"
+# true for left-hand traffic (United Kingdom, Japan, ...): netconvert builds the network with --lefthand.
+lefthand = false
+# true adds SUMO's German urban speed type map (osmNetconvertUrbanDe) when the network is built here.
+german_urban_speeds = true
+
+[area]
+# Bounding box (degrees) for building the network from OpenStreetMap when inputs.sumo_net is empty.
+# Zurich: OSM relation 1682248.
+west = 8.4480182
+south = 47.3202184
+east = 8.6254529
+north = 47.4346650
+
+[inputs]
+# Everything the pipeline writes goes to work_dir/pipeline.
+work_dir = "~/zurich-sim/national-morning"
+# MATSim (eqasim) output: output_plans, output_network and the config with the sample share.
+matsim_dir = "~/Downloads/National"
+matsim_plans = "output_plans.xml.gz"
+matsim_network = "output_network.xml.gz"
+# Empty: the output_config.xml(.gz) with sampleSize or flowCapacityFactor is searched in matsim_dir.
+matsim_config = ""
+# Unedited SUMO network and the OpenStreetMap extract it was built from (for the turn restrictions).
+# Leave sumo_net empty to build both from OpenStreetMap for [area].
+sumo_net = "~/zurich-sim/zurich-repair/zurich.net.xml"
+osm = "~/zurich-sim/zurich-repair/zurich.osm.xml"
+
+[demand]
+# Simulated hour (local time of the MATSim plans) and the MATSim modes that are simulated.
+from = "07:00:00"
+to = "08:00:00"
+modes = "car,truck"
+# Shares of the population after the MATSim sample itself. The repair runs at the sample first,
+# then at each level, each starting from the network of the level before. The last level is 1.0.
+levels = [0.25, 0.5, 1.0]
+# Share of the population in the MATSim plans; 0 reads sampleSize or flowCapacityFactor from the
+# MATSim config. The Zurich eqasim output has no config beside it: it is a 10 % sample.
+sample_share = 0.1
+
+[validation]
+# "zurich" compares the final run with the Zurich traffic counts; empty skips the comparison.
+counts = "zurich"
+count_year = 2024
