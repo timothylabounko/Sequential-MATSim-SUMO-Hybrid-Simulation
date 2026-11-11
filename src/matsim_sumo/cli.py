@@ -123,6 +123,9 @@ def _delegate(command: str, argv: Sequence[str]) -> int:
         "plot-boundary": "matsim_sumo.visualization.sumo_network_boundary",
         "export-routes": "matsim_sumo.io.qgis_export",
         "analyze-mode-shares": "analysis.mode_shares.cli",
+        "extract-zurich-network": "matsim_sumo.network.osm_zurich",
+        "correct-zurich-network": "matsim_sumo.network.zurich_correction",
+        "evolve-zurich-turns": "matsim_sumo.network.turn_evolution",
     }
     module_name = modules[command]
     module = __import__(module_name, fromlist=["main"])
@@ -139,10 +142,13 @@ def _print_help() -> None:
     print(
         "usage: matsim-sumo <command> [options]\n\n"
         "Commands:\n"
-        "  run                 Run the full MATSim-SUMO pipeline.\n"
-        "  plot-boundary       Plot the SUMO network and boundary from a config.\n"
-        "  export-routes       Export SUMO routes to a GeoPackage for QGIS.\n"
-        "  analyze-mode-shares Run the mode-share analysis utility.\n\n"
+        "  run                     Run the full MATSim-SUMO pipeline.\n"
+        "  plot-boundary           Plot the SUMO network and boundary from a config.\n"
+        "  export-routes           Export SUMO routes to a GeoPackage for QGIS.\n"
+        "  analyze-mode-shares     Run the mode-share analysis utility.\n"
+        "  extract-zurich-network  Build a SUMO network from the City of Zürich OSM roads.\n"
+        "  correct-zurich-network  Correct unambiguous intersection errors on the unedited Zürich network.\n"
+        "  evolve-zurich-turns     Search TomTom-supported turn edits on the corrected network.\n\n"
         "Use 'matsim-sumo <command> --help' for command options."
     )
 
@@ -156,7 +162,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     command, command_args = args[0], args[1:]
     if command == "run":
         return _run_pipeline(command_args)
-    if command in {"plot-boundary", "export-routes", "analyze-mode-shares"}:
+    if command in {
+        "plot-boundary",
+        "export-routes",
+        "analyze-mode-shares",
+        "extract-zurich-network",
+        "correct-zurich-network",
+        "evolve-zurich-turns",
+    }:
         return _delegate(command, command_args)
 
     print(f"Unknown command: {command}", file=sys.stderr)

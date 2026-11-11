@@ -217,7 +217,60 @@ python scripts/run_pipeline.py --config configs/my_run.yaml
 
 `scripts/` should contain only this wrapper.
 
-## 9. SUMO And External Tools
+## 9. Zurich OSM Network
+
+`networks/zurich/zurich.net.xml` is the file to open in SUMO.
+It contains the drivable passenger roads for the City of Zürich (OSM relation 1682248).
+Footways, cycleways, and service roads are not included.
+The file has no traffic demand. Opening it shows the roads, junctions, and traffic lights.
+
+Rebuild the file with a current SUMO. `netconvert` from SUMO 1.18 aborts on this map.
+`pip install eclipse-sumo` provides a working `netconvert`. Point `SUMO_HOME` at that installation
+(for the wheel, the directory that contains `bin/netconvert` and `data/typemap`).
+
+```bash
+matsim-sumo extract-zurich-network
+```
+
+The default output path is `networks/zurich/zurich.net.xml`.
+Pass `--output` to write a different `.net.xml` path.
+
+Load it in SUMO GUI:
+
+1. Install Eclipse SUMO from [https://eclipse.dev/sumo/](https://eclipse.dev/sumo/) so the `sumo-gui` program is available.
+2. Start SUMO with the network path:
+
+```bash
+sumo-gui -n networks/zurich/zurich.net.xml
+```
+
+3. Or start `sumo-gui` with no arguments, choose **File → Open Network...**, and select `networks/zurich/zurich.net.xml`.
+4. Zoom with the mouse wheel. Pan by dragging with the right mouse button.
+5. Click an edge to read its street name and speed. The play button does not move vehicles, because this file is only the network.
+
+To use the same file in the pipeline, copy it to `data/inputs/sumo/scenario.net.xml` and set `sumo_network_path` to that filename.
+
+### Intersection correction
+
+`matsim-sumo correct-zurich-network` reads the unedited `networks/zurich/zurich.net.xml` and writes a new network under `results/zurich-correction/`. The source file is not modified. A later run starts from that same source again, replaces the corrected network, and keeps the previous `report.json` under `results/zurich-correction/history/`.
+
+The command edits only unambiguous cases:
+
+- a U-turn is removed when the approach also has another exit
+- an empty lane is connected to the one straight downstream edge already used by the other lanes on that approach
+- an OSM turn prohibition is removed when the from way, via node, to way, and turn direction agree
+- extra turns are removed for an OSM `only_*` restriction when that allowed turn exists
+
+Missing turns are listed in `suspects.csv` and are not added from geometry. Ambiguous restrictions are listed and left unchanged. TomTom and Google are not called. Set `TOMTOM_API_KEY` or `GOOGLE_MAPS_API_KEY` only as a reminder; the command still skips the paid request and writes `route-cover.csv` for the turns that would be checked.
+
+```bash
+matsim-sumo correct-zurich-network
+sumo-gui -n results/zurich-correction/zurich.corrected.net.xml
+```
+
+Run the `sumo-gui` command from the repository root after the correction command has finished. `results/` is not committed. Regenerating the corrected network does not require downloading OSM again. The optional OSM file beside the source, `networks/zurich/zurich.osm.xml`, supplies the restriction relations. Without it, the lane and U-turn rules still run.
+
+## 10. SUMO And External Tools
 
 Install SUMO separately if `run_duarouter: true`.
 Set `duarouter_bin` to `duarouter` when it is on `PATH`, or to an absolute executable path.
@@ -245,7 +298,7 @@ brew install pigz parallel
 GNU Parallel may print a citation notice on first use.
 Run `parallel --citation` once if you want to silence that notice.
 
-## 10. MATSim Router And Java
+## 11. MATSim Router And Java
 
 Travel-time analysis can route MATSim trips through a Java router.
 The repository includes the required JAR at:
@@ -258,7 +311,7 @@ This file is a required bundled router artifact, not a generated output.
 Java must be installed and available as `java` on `PATH`.
 Memory can be configured in travel-time configs with `matsim_router_java_xmx`.
 
-## 11. Travel-Time Analysis
+## 12. Travel-Time Analysis
 
 Travel-time analysis code is tracked under:
 
@@ -282,7 +335,7 @@ export TOMTOM_API_KEY="your_key_here"
 Generated travel-time run folders and response artifacts are ignored by Git.
 See `analysis/travel_times/README.md` for details.
 
-## 12. Figure Helpers
+## 13. Figure Helpers
 
 Submission helper scripts that are not the main pipeline wrapper live under:
 
@@ -293,7 +346,7 @@ analysis/figures/
 These scripts generate figures from existing outputs or online map tiles.
 Generated figure outputs should be committed only when intentionally used as documentation assets.
 
-## 13. Troubleshooting
+## 14. Troubleshooting
 
 `duarouter` is not found.
 Install SUMO or set `duarouter_bin` to the correct executable.

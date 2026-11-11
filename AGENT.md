@@ -75,6 +75,8 @@ matsim-sumo run
 matsim-sumo plot-boundary
 matsim-sumo export-routes
 matsim-sumo analyze-mode-shares
+matsim-sumo extract-zurich-network
+matsim-sumo correct-zurich-network
 ```
 
 The full pipeline is orchestrated by `src/matsim_sumo/pipeline/runner.py`.
