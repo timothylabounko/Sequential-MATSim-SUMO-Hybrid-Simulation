@@ -1,0 +1,22 @@
+% Drop-in wording for the thesis method (stage 3 vs stage 4).
+% Replace the old stage-4 bullets (OpenStreetMap priority / lane continuations /
+% signal programs / small impatience search) with the text below.
+
+Stage~3 (signals and intersections) finishes the network edits at full demand:
+Webster timing for actuated signals; short links joined and lane continuations
+or lifted lane-change bans where the default driver was stuck in both seeds;
+and one OpenStreetMap pass at junctions where several vehicles gave up waiting
+to give way (actuated signal if OSM has a light there, edge priorities from the
+OSM road class). Signal programs are carried over connection by connection;
+any new signal gets a Webster timing. After stage~3 the network and its signals
+are fixed.
+
+Stage~4 is only about how drivers act on that road. An evolutionary search
+tunes car-following (Krauss), lane changing and overtaking (LC2013), junction
+behaviour (impatience, minor-road time gaps, time-to-impatience), and en-route
+rerouting (probability, period, and travel-time adaptation), on the mean of
+seeds 23 and 42. Fitness weights teleports ten times more heavily than
+vehicles that never enter, penalises collisions above the SUMO default driver,
+and penalises travel times far from Google's on a fixed trip sample. Each round
+starts from the best drivers so far and stops at zero teleports, after two
+rounds without a new lowest count, or after four rounds.

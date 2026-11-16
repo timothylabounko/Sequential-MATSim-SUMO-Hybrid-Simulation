@@ -104,6 +104,8 @@ class ConfigCliTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("matsim-sumo <command>", out.getvalue())
         self.assertIn("export-routes", out.getvalue())
+        self.assertIn("extract-zurich-network", out.getvalue())
+        self.assertIn("correct-zurich-network", out.getvalue())
 
 
 if __name__ == "__main__":
