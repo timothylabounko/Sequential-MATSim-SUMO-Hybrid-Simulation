@@ -1,0 +1,157 @@
+% Flow charts of the network correction. Needs tikz with
+% arrows.meta, positioning, shapes.geometric, fit, calc, backgrounds, and adjustbox.
+% The styles are defined once here and used by both figures.
+\tikzset{
+    flow/.style={font=\footnotesize, node distance=3mm and 6mm},
+    box/.style={draw, rounded corners=2pt, align=center, fill=white,
+        minimum height=7mm, inner sep=2pt, text width=#1},
+    box/.default=34mm,
+    data/.style={draw, align=center, fill=gray!12, minimum height=7mm,
+        text width=#1, trapezium, trapezium left angle=75,
+        trapezium right angle=105, trapezium stretches body},
+    data/.default=30mm,
+    check/.style={draw, diamond, aspect=2.2, align=center, fill=white,
+        inner sep=1pt, text width=22mm},
+    osm/.style={box=#1, fill=green!10},
+    osm/.default=34mm,
+    google/.style={box=#1, fill=blue!8},
+    google/.default=34mm,
+    untried/.style={box=#1, draw=gray, dashed, text=gray!60!black},
+    untried/.default=40mm,
+    arrow/.style={-{Stealth[length=2mm]}, thick},
+    tag/.style={font=\scriptsize, fill=white, inner sep=1pt},
+}
+
+% ===== Figure 1: stages 1 and 2 (replaces the figure with \label{fig:repair-flow}) =====
+\begin{figure}[htbp]
+    \centering
+    \begin{adjustbox}{max width=\textwidth, max totalheight=0.8\textheight}
+    \begin{tikzpicture}[flow]
+        \node[data] (net) {Unedited SUMO network\\and OSM extract};
+        \node[data=34mm, right=18mm of net] (plans) {eqasim \texttt{output\_plans}\\and MATSim network};
+        \node[box, below=of net] (correct) {\textbf{Filtering}\\rules C1--C5,\\tram access};
+        \node[box, below=of plans] (demand) {\textbf{Demand cut}\\follow routes, trim to\\the connected network};
+        \node[data, below=of correct] (corrected) {Corrected network};
+        \node[data=34mm, below=of demand] (scale) {Car, van and truck trips\\07:00--08:00, 10\,\% sample};
+
+        \coordinate (mid) at ($(corrected.south)!0.5!(scale.south)$);
+        \node[osm=50mm, below=7mm of mid] (osmstep) {\textbf{OpenStreetMap step}\\connect links that stop where\\OpenStreetMap continues,\\repeated up to 4 times};
+        \node[box=52mm, below=of osmstep] (sim) {\textbf{Simulate the National demand}\\vehicles stuck for 120\,s (stage 1)\\or 300\,s (stage 2) are teleported;\\counted from SUMO statistics};
+        \node[check, below=of sim] (stuck) {Vehicles stuck?};
+
+        \node[google=27mm, below=13mm of stuck] (turns) {\textbf{Turn genes}\\Google disagrees\\with the network};
+        \node[google=27mm, left=4mm of turns] (lanes) {\textbf{Lane genes}\\wrong-lane movement\\Google drives};
+        \node[box=27mm, right=4mm of turns] (bans) {\textbf{Ban genes}\\lane-change bans\\near wrong-lane stops};
+
+        \node[box=60mm, below=of turns] (evolve) {\textbf{Evolutionary search}\\8 individuals, 2 elites, uniform crossover,\\one gene flipped, at most 6 generations};
+        \node[box=46mm, below=of evolve] (score) {Build network, simulate, score\\stuck vehicles + unroutable trips};
+        \node[osm=46mm, below=of score] (review) {\textbf{OpenStreetMap review}\\reject a new link to nowhere\\or a split network};
+        \node[check, below=of review] (better) {Better\\network?};
+
+        \node[osm=56mm, below=6mm of better] (final) {\textbf{Final check}\\OpenStreetMap check and simulation};
+        \node[check, below=of final] (stage) {Stage 1\\(10\,\% sample)?};
+        \node[box=40mm, left=8mm of stage] (scaleup) {\textbf{Scale to full population}\\\(\times 10\), clones \(\pm 30\,\mathrm{min}\),\\free ends moved \(\le 500\,\mathrm{m}\)\\to homes and workplaces;\\routes checked lane by lane};
+        \node[data=34mm, right=8mm of stage] (next) {Repaired network\\at full traffic\\(Figure~\ref{fig:full-traffic-flow})};
+
+        \draw[arrow] (net) -- (correct);
+        \draw[arrow] (correct) -- (corrected);
+        \draw[arrow] (plans) -- (demand);
+        \draw[arrow] (demand) -- (scale);
+        \draw[arrow] (corrected.south) |- ($(osmstep.north)+(0,4mm)$) -- (osmstep.north);
+        \draw[arrow] (scale.south) |- ($(osmstep.north)+(0,4mm)$) -- (osmstep.north);
+        \draw[arrow] (osmstep) -- (sim);
+        \draw[arrow] (sim) -- (stuck);
+        \draw[arrow] (stuck) -- (turns);
+        \node[tag, anchor=west, align=left] at ($(stuck.south)+(1mm,-3.6mm)$) {yes: the 40 approaches\\with the most stuck vehicles};
+        \draw[arrow] (stuck.south) -- ++(0,-8mm) -| (lanes.north);
+        \draw[arrow] (stuck.south) -- ++(0,-8mm) -| (bans.north);
+        \draw[arrow] (lanes.south) -- (lanes.south |- evolve.north);
+        \draw[arrow] (turns) -- (evolve);
+        \draw[arrow] (bans.south) -- (bans.south |- evolve.north);
+        \draw[arrow] (evolve) -- (score);
+        \draw[arrow] (score) -- (review);
+        \draw[arrow] (review) -- (better);
+        \draw[arrow] (better) -- node[tag, right, pos=0.8] {no} (final);
+        \draw[arrow] (final) -- (stage);
+        \draw[arrow] (stage) -- node[tag, above] {no} (next);
+
+        \draw[arrow] (review.east) -- ++(12mm,0) |- node[tag, pos=0.25, rotate=90, anchor=south] {next individual} (evolve.east);
+        \draw[arrow] (better.west) -- node[tag, above] {yes: next round} ++(-38mm,0) |- (osmstep.west);
+        \draw[arrow] (stuck.east) -- node[tag, above] {no} ++(38mm,0) |- (final.east);
+        \draw[arrow, dashed] (stage.west) -- node[tag, above] {yes} (scaleup.east);
+        \draw[arrow, dashed] (scaleup.west) -- ++(-4mm,0) |- node[tag, pos=0.25, rotate=90, anchor=south] {stage 2: same rounds at full traffic} ($(osmstep.west)+(0,2mm)$);
+
+        \begin{scope}[on background layer]
+            \node[draw=gray, dashed, rounded corners=4pt, inner sep=3mm,
+                fit=(osmstep) (sim) (stuck) (lanes) (bans) (evolve) (review) (better),
+                label={[font=\scriptsize\itshape, anchor=south west, align=left]south west:one round\\stage 1: up to 10\\stage 2: up to 3}] {};
+        \end{scope}
+    \end{tikzpicture}
+    \end{adjustbox}
+    \caption{Filtering and evolutionary repair. Stage~1 repairs the
+    network with the sampled National demand; stage~2 repeats the rounds
+    with the demand scaled to the full population, starting from the
+    repaired network. Green steps compare the network with
+    OpenStreetMap, and blue steps use Google Routes.}
+    \label{fig:repair-flow}
+\end{figure}
+
+% ===== Figure 2: stages 3 to 5 at full traffic (new) =====
+\begin{figure}[htbp]
+    \centering
+    \begin{adjustbox}{max width=\textwidth, max totalheight=0.8\textheight}
+    \begin{tikzpicture}[flow]
+        \node[data=56mm] (start) {Repaired network of stage~2\\and the trips scaled \(\times 10\)};
+        \node[box=72mm, below=of start] (signals) {\textbf{Stage 3a: signal timing}\\Webster from the routed full demand, actuated,\\maximum green \(1.25\times\) Webster's green;\\short edges with collisions: junctions joined};
+        \node[google=72mm, below=of signals] (calib) {\textbf{Stage 3b: driver behaviour}\\11 genes, 6 individuals, 2 elites, 3 generations;\\score: teleported \% + not inserted \%\\+ travel-time bias beyond \(\pm 10\,\%\)};
+        \node[check, below=of calib] (teleported) {Vehicles\\teleported?};
+
+        \node[osm=72mm, below=9mm of teleported] (priority) {\textbf{Priority against OpenStreetMap}\\where \(\ge 2\) vehicles gave up yielding:\\OSM light: actuated signal; OSM road class:\\edge priority; sign or agreement: unchanged};
+        \node[box=72mm, below=of priority] (lanes) {\textbf{Lanes and junctions}\\a wrong-lane lane gets the movement\\of the lane next to it; split junctions joined};
+        \node[box=72mm, below=of lanes] (programs) {\textbf{Signal programs}\\carried over link by link, Webster for\\new signals, one priority green per lane};
+        \node[google=72mm, below=of programs] (search) {\textbf{Behaviour search}\\impatience and \texttt{jmTimegapMinor}, seeds 23 and 42;\\score: \(10\times\) teleported \% + not inserted \%\\+ bias beyond \(\pm 10\,\%\) + extra collisions};
+        \node[check, below=of search] (fewer) {Fewer\\teleports?};
+
+        \node[box=72mm, below=8mm of fewer] (noteleport) {\textbf{Stage 5: no teleports}\\network, signals, routes and driver unchanged;\\teleporting off, a blocked junction is passed\\after 60\,s, collisions are only warned};
+        \node[box=72mm, below=of noteleport] (watch) {\textbf{Stuck count through TraCI}\\vehicles standing still \(\ge 300\,\mathrm{s}\): at a lane\\front, in a queue, at the end of the hour};
+        \node[box=72mm, below=of watch] (result) {\textbf{Result at full traffic}\\no teleports; standing vehicles as capacity limits;\\travel time against Google, GEH against counts,\\compared with the unrepaired network};
+
+        \node[untried=36mm, left=10mm of noteleport] (forced) {\textbf{Tested, not kept:}\\forced network:\\signals, zippers, extra\\lanes, protected turns};
+        \node[untried=36mm, below=of forced] (assign) {\textbf{Tested, not kept:}\\iterative assignment\\(\texttt{duaIterate}) without\\rerouting};
+
+        \draw[arrow] (start) -- (signals);
+        \draw[arrow] (signals) -- (calib);
+        \draw[arrow] (calib) -- (teleported);
+        \draw[arrow] (teleported) -- node[tag, right, pos=0.4] {yes} (priority);
+        \draw[arrow] (priority) -- (lanes);
+        \draw[arrow] (lanes) -- (programs);
+        \draw[arrow] (programs) -- (search);
+        \draw[arrow] (search) -- (fewer);
+        \draw[arrow] (fewer) -- node[tag, right, pos=0.4] {no} (noteleport);
+        \draw[arrow] (noteleport) -- (watch);
+        \draw[arrow] (watch) -- (result);
+
+        \coordinate (loop) at ($(priority.west)+(-6mm,0)$);
+        \draw[arrow] (fewer.west) -- node[tag, above] {yes: next round} (fewer.west -| loop) |- (priority.west);
+        \draw[arrow] (teleported.east) -- node[tag, above] {no} ++(40mm,0) |- (result.east);
+        \draw[dashed, gray] (noteleport.west) -- (forced.east);
+        \draw[dashed, gray] ($(noteleport.west)+(-5mm,0)$) |- (assign.east);
+
+        \begin{scope}[on background layer]
+            \node[draw=gray, dashed, rounded corners=4pt, inner sep=3mm,
+                fit=(priority) (lanes) (programs) (search) (fewer),
+                label={[font=\scriptsize\itshape, anchor=south east, align=right]south east:stage 4: one round\\of junction repair}] {};
+        \end{scope}
+    \end{tikzpicture}
+    \end{adjustbox}
+    \caption{Signal timing, driver behaviour, and the steps towards a
+    simulation without teleports at full traffic. Stage~3 sets the
+    signal timing and calibrates the driver on the network of stage~2.
+    Stage~4 repairs the junctions where vehicles are still teleported
+    and tunes only the gap acceptance of the driver, until a round no
+    longer reduces the teleports. Stage~5 switches teleporting off and
+    counts the vehicles that stand still instead. The dashed grey steps
+    were tested in place of stage~5 and not kept. Green steps compare
+    the network with OpenStreetMap, and blue steps use Google Routes.}
+    \label{fig:full-traffic-flow}
+\end{figure}

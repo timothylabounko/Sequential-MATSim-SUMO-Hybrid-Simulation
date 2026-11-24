@@ -139,3 +139,6 @@ activemq-data/
 # Feedback notes are archived under archive/feedback when kept.
 /FEEDBACK.md
 /Feedback.md
+
+# The City of Zürich reference network is tracked so it can be opened in sumo-gui.
+!networks/zurich/zurich.net.xml

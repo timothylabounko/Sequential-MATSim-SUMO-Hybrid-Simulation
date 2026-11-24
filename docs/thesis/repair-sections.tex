@@ -1,0 +1,663 @@
+% Needs \usepackage{natbib} (for \citet) and this entry in the .bib file:
+% @mastersthesis{baggenstos2026,
+%   author = {Baggenstos, Matteo},
+%   title  = {Sequential {MATSim}--{SUMO} Hybrid Simulation: A Case Study in {Zurich} ({Switzerland})},
+%   school = {IVT, ETH Z{\"u}rich},
+%   year   = {2026},
+%   month  = jun,
+%   type   = {Master's thesis}
+% }
+% and for the signal timing and the count check:
+% @techreport{webster1958,
+%   author = {Webster, F. V.}, title = {Traffic Signal Settings},
+%   institution = {Road Research Laboratory, HMSO}, address = {London},
+%   type = {Road Research Technical Paper}, number = {39}, year = {1958}
+% }
+% @techreport{koonce2008,
+%   author = {Koonce, Peter and Rodegerdts, Lee and others}, title = {Traffic Signal Timing Manual},
+%   institution = {Federal Highway Administration}, number = {FHWA-HOP-08-024}, year = {2008}
+% }
+% @manual{dmrb1996,
+%   title = {Design Manual for Roads and Bridges, Volume 12, Section 2, Part 1: Traffic Appraisal in Urban Areas},
+%   organization = {Highways Agency}, address = {London}, year = {1996}
+% }
+% @misc{zurichcounts,
+%   author = {{Stadt Z{\"u}rich, Dienstabteilung Verkehr}},
+%   title = {Daten der Verkehrsz{\"a}hlung zum motorisierten Individualverkehr (Stundenwerte)},
+%   howpublished = {Open Data Z{\"u}rich, dataset sid\_dav\_verkehrszaehlung\_miv\_od2031, CC0}, year = {2024}
+% }
+
+% ===== (B) replaces \subsubsection{Evolutionary Repair of Remaining Gridlocks} =====
+\subsubsection{Evolutionary Repair of Remaining Gridlocks}
+\label{subsubsec:evolutionary-turns}
+
+The filtering rules repair what the network shows on its own. Some
+errors only appear when cars use the network: a lane that leads to a
+junction its cars cannot cross, a missing turn, or a lane-change ban
+that traps a car in the wrong lane. This stage finds them by simulating
+the National demand on the corrected City of Zürich network and
+repairs them with an evolutionary search. It reads the corrected file
+and writes each new network beside it. Figure~\ref{fig:repair-flow}
+shows the procedure.
+
+The demand is the eqasim National car and truck demand for 07:00 to
+08:00, cut to the Zürich network as described in
+Section~\ref{subsec:demand-transfer}. Trips are routed with
+\texttt{duarouter}, and the hour is simulated in SUMO. A vehicle that
+has not moved for \(120\,\mathrm{s}\) is removed and counted. SUMO
+records why it waited: in the wrong lane, at a lane with no outgoing
+connection, behind a queue, while yielding, or after a collision. A
+trip with no path through the network is counted as unroutable.
+
+The repair runs in rounds, and each round has three steps.
+
+\paragraph{OpenStreetMap step.} The network is first compared with
+OpenStreetMap. A link that ends at a junction where the OpenStreetMap
+way continues, but has no SUMO connection onward, is connected to that
+continuation. Links that join otherwise separate parts of the drivable
+network are connected in the same way. The step is repeated up to four
+times, because a new connection can expose the next missing one.
+
+\paragraph{Simulation and candidate edits.} The National demand is
+simulated on the checked network. The edits that the search may make
+come from the places where vehicles stopped. To bound the number of
+Google requests, only the 40 approaches with the most stuck vehicles
+are used. Three kinds of edit are formed.
+
+\begin{enumerate}[label=\textbf{G\arabic*:}]
+    \item \emph{Turns.} At each approach, the usual left, straight, and
+    right movements are submitted to the Google Routes API as driving
+    routes with traffic ignored. The origin lies \(40\,\mathrm{m}\)
+    upstream of the junction and the destination \(40\,\mathrm{m}\)
+    downstream. A route no longer than \(\max(2.5\,d,\ d+250\,\mathrm{m})\),
+    where \(d\) is the direct distance through the junction, is read as
+    a movement that exists. A longer route is read as a movement Google
+    does not drive. An edit is formed only where Google disagrees with
+    the network: a missing movement that Google drives may be added,
+    and a present movement that Google does not drive may be deleted.
+
+    \item \emph{Lane movements.} For a vehicle that waited in the wrong
+    lane, its route is followed from that lane through the lane
+    connections, for up to \(1{,}000\,\mathrm{m}\). Where a lane-change
+    ban keeps the vehicle in its lane, it stays there. The first
+    junction at which the lane cannot reach the next edge of the route
+    gives the blocked movement. When Google drives that movement, a
+    connection from that lane is a candidate edit. At most twelve such
+    movements are used, starting with those that stopped the most
+    vehicles.
+
+    \item \emph{Lane-change bans.} SUMO imports the OpenStreetMap
+    \texttt{change:lanes} tags as bans on changing lanes. A ban on the
+    approach to a junction can keep a car in a lane that does not lead
+    where it is going. For each edge with wrong-lane stops, the edges up
+    to \(500\,\mathrm{m}\) downstream that carry a ban are collected,
+    and each connected stretch of them is one candidate: lifting the
+    ban on that stretch.
+\end{enumerate}
+
+Each candidate is one gene, and a chromosome is a binary vector that
+switches the candidates on or off. A chromosome is turned into a
+network with \texttt{netconvert}, which adds or deletes the chosen
+connections, and the chosen bans are then lifted. Routes are repaired
+for the new network before it is simulated. The score of a network is
+\begin{equation}
+    F = n_{\mathrm{stuck}} + n_{\mathrm{unroutable}} + 0.001\,n_{\mathrm{edits}},
+    \label{eq:repair-fitness}
+\end{equation}
+where \(n_{\mathrm{stuck}}\) is the number of stuck vehicles,
+\(n_{\mathrm{unroutable}}\) the number of trips without a path, and
+\(n_{\mathrm{edits}}\) the number of genes switched on. Counting
+unroutable trips means that deleting a movement cannot improve the
+score by removing the cars that used it. The small edit term prefers
+the smaller of two networks with the same count.
+
+\paragraph{Evolutionary search.} The population holds eight
+chromosomes, one of them the network without further edits. The two
+best individuals are kept in each generation. The others are produced
+by uniform crossover and by flipping one gene. The search stops when
+the best score reaches zero, when two successive generations do not
+improve it, or after six generations.
+
+Every individual is compared with OpenStreetMap after it is simulated.
+It is rejected when it has a link to nowhere that the network at the
+start of the round did not have, or when it splits the drivable network
+into more pieces. A rejected individual cannot be selected, whatever
+its score.
+
+The best accepted network starts the next round. The rounds stop when
+no vehicle is stuck, when the search keeps no edit or does not improve
+on the start of the round, or after the maximum number of rounds. The
+last network then receives a final OpenStreetMap check and a final
+simulation, and the places where vehicles still stop are listed.
+
+\paragraph{Sampled and full demand.} The eqasim scenario simulates a
+sample of the population, so the repair is run in stages. Stage~1 uses
+the sampled demand for up to ten rounds. Errors in the layout of the
+network stop cars whatever the volume, so this stage finds most of
+them, and each simulation takes about a minute. Stage~2 scales the
+demand to the full population as described in
+Section~\ref{subsec:demand-scaling} and runs up to three further rounds
+from the network that stage~1 produced. The unrepaired network is
+simulated with the same demand for comparison. From stage~2 on, a
+vehicle counts as stuck only after \(300\,\mathrm{s}\) without moving,
+the SUMO default, because waiting two minutes at a busy junction in the
+morning peak is normal. Stuck vehicles are counted from SUMO's
+statistic output (\texttt{--statistic-output}): the teleports per
+inserted vehicle, split into queue, yield, wrong lane, and collision,
+and the vehicles that could not enter the network before the hour
+ended. A collision is resolved by one teleport, the SUMO default; with
+collisions only reported, SUMO repeats the warning every step, so
+counting warnings would count one collision many times. At full volume
+some vehicles stop because a junction or a road has too little
+capacity. Turn and lane edits cannot add capacity, so the remaining
+stops are reported in two groups: network errors (wrong lane, no
+connection, and collision) and capacity (queue and yield).
+
+\paragraph{Routes and lane-change bans.} From stage~2 on, the trips are
+routed once with \texttt{duarouter}, and every later simulation uses
+these routes and the same SUMO options, so a result can be repeated in
+\texttt{sumo-gui}. Each vehicle also chooses its route again at
+departure and every five minutes from the current travel times (SUMO
+rerouting device), instead of all clones of a trip driving the
+shortest path of the empty network. Both routers choose a sequence of
+edges and assume that a vehicle can change to any lane on the way.
+Where OpenStreetMap marks a lane change as forbidden
+(\texttt{change:lanes}, solid lines), some of these routes cannot be
+driven, and the vehicle waits at the end of its lane until it is
+teleported. At the A1/A4 merge at Opfikon, for example, the lanes to
+Zürich-City are separated from the lanes to St.~Gallen by a solid line,
+so a car from the Zürich-City slip road cannot continue towards
+St.~Gallen. Every route is therefore checked lane by lane, using only
+the network's connections and the lane changes allowed for cars. A
+route that cannot be driven is replaced by the fastest route that can
+(free-flow times, Dijkstra on the lane graph). A vehicle whose route
+passes an edge from which an undrivable path starts within
+\(1\,\mathrm{km}\) keeps its route and is not rerouted.
+
+\paragraph{Signal timing.} The traffic lights of the network are not
+the programs of the city: netconvert guessed which junctions have
+signals from OpenStreetMap and gave each an actuated program with
+standard phase lengths. Before the behaviour calibration, the cycle
+length and the green splits of every signal are set from the routed
+full demand with Webster's method \citep{webster1958}, using SUMO's
+\texttt{tlsCycleAdaptation.py} (saturation headway \(2\,\mathrm{s}\),
+lost time \(4\,\mathrm{s}\) per phase, cycle
+\(60\)--\(120\,\mathrm{s}\), a truck counting as 3.5 cars). Yellow
+and all-red phases keep their lengths. The signals stay actuated, as
+most signals in Zürich are traffic-actuated: a green phase starts with
+Webster's green, keeps its minimum green, and may be extended by the
+detectors up to 1.25 times Webster's green, the lower end of the usual
+maximum green of an actuated controller \citep{koonce2008}. A detector
+that is occupied for \(30\,\mathrm{s}\) counts as jammed, so that
+SUMO also uses detectors on lanes shared by movements with different
+phases. For comparison, the guessed programs and a fixed-time Webster
+plan with offsets for green waves (SUMO's \texttt{tlsCoordinator.py})
+are simulated as well; the actuated plan is used in any case, so the
+choice does not depend on the number of stuck vehicles. Where an edge
+shorter than one car (\(7.5\,\mathrm{m}\)) separates two junctions and
+at least two pairs of vehicles collided on it, the two junctions are
+joined into one, since a car stopped on such an edge stands across the
+junction behind it.
+
+\paragraph{Driver behaviour.} Stage~3 calibrates how drivers follow,
+yield, and change lanes, on the network that stage~2 produced and with
+the Webster signal programs. It runs after the network repair so that
+a behaviour setting cannot hide a lane or connection error. The
+network, its lanes, and the signal programs are not changed, and no
+parameter lets a driver ignore a red light.
+Table~\ref{tab:behaviour-genes} lists the eleven genes and their
+ranges; each range contains the SUMO default. The genes are real
+numbers. The search uses the same scheme as the network repair: six
+individuals, two elites, tournament selection, uniform crossover, and
+one gene redrawn per child, for three generations. The first population
+contains the SUMO defaults and the microscopic settings of
+\citet{baggenstos2026} (\texttt{ignore-junction-blocker}
+\(1\,\mathrm{s}\), \texttt{time-to-impatience} \(30\,\mathrm{s}\)).
+
+Removing every queue would make the model faster than the real city.
+The score therefore combines the stuck vehicles with the travel time.
+Sixty trips of the scaled demand that depart in the first half hour are
+drawn once. Their travel times are requested from the Google Routes API
+with traffic, for the same departure time on a weekday, as
+\citet{baggenstos2026} did with TomTom. With \(p\) the teleported share
+in percent, \(w\) the share of the loaded vehicles that could not enter
+the network before the hour ended in percent, and \(b\) the bias of the
+mean SUMO travel time against Google in percent, the score is
+\begin{equation}
+    F_{\mathrm{b}} = p + w + \max\bigl(0,\ |b| - 10\bigr).
+    \label{eq:behaviour-fitness}
+\end{equation}
+Travel times within \(\pm 10\,\%\) of Google are not penalised; beyond
+that, each percentage point counts as much as one percent of teleported
+vehicles. Without \(w\), a setting that blocks the entries of the
+network would score well, because a vehicle that never enters cannot be
+teleported. A vehicle that has not arrived when the hour ends counts with
+the time it has driven so far.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Genes of the behaviour calibration. vType parameters apply
+    to cars, vans, and trucks; options apply to the whole simulation.}
+    \label{tab:behaviour-genes}
+    \small
+    \begin{tabular}{@{}lp{56mm}rr@{}}
+        \toprule
+        Gene & Effect & Range & Default \\
+        \midrule
+        \texttt{tau} & desired time headway (s) & 0.8--1.2 & 1.0 \\
+        \texttt{sigma} & driver imperfection & 0.1--0.5 & 0.5 \\
+        \texttt{impatience} & willingness to force a gap & 0--1 & 0 \\
+        \texttt{jmTimegapMinor} & gap accepted from a minor road (s) & 0.5--1.5 & 1.0 \\
+        \texttt{jmIgnoreKeepClearTime} & wait before entering a keep-clear area (s) & off, 1--60 & off \\
+        \texttt{lcStrategic} & how early a driver changes lanes for the route & 0.5--5 & 1 \\
+        \texttt{lcCooperative} & willingness to let others change in & 0.5--1 & 1 \\
+        \texttt{lcAssertive} & acceptance of small gaps when changing lanes & 1--5 & 1 \\
+        \texttt{lcLookaheadLeft} & how much earlier a driver plans a change to the left & 1--4 & 2 \\
+        \texttt{time-to-impatience} & wait until a driver becomes impatient (s) & 30--300 & 180 \\
+        \texttt{ignore-junction-blocker} & wait before passing a blocked junction (s) & off, 1--60 & off \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\paragraph{Hotspots.} The best behaviour is simulated again with a
+second random seed. An approach that stops at least five vehicles in
+both runs is a hotspot; for each, it is noted whether the approach ends
+at a traffic light. Hotspots are not edited further. They are capacity
+limits of the modelled network at full traffic, for example a missing
+lane or a junction with too little throughput, and are discussed as
+limitations (Section~\ref{sec:full-traffic}). The stuck vehicles of
+the best run are also split by five-minute interval, by approach, and
+by vehicle type against each type's share of the demand.
+
+\paragraph{Traffic counts.} The best run is compared with the hourly
+motor-traffic counts of the city of Zürich \citep{zurichcounts}. For
+each measurement site, the reference is the median of 07:00--08:00
+over the measured Tuesdays to Thursdays of \tbd{2024}, without July,
+August, and the Christmas holidays. A counting cross-section is the sum
+of its directions and is matched to the nearest SUMO edges within
+\(50\,\mathrm{m}\) that carry the same street, one per counted
+direction. The agreement is given by the GEH statistic,
+\(\mathrm{GEH} = \sqrt{2(M-C)^2/(M+C)}\) with \(M\) the simulated and
+\(C\) the counted vehicles per hour; GEH below 5 at 85\,\% of the
+cross-sections is the usual acceptance level for an hourly model
+\citep{dmrb1996}.
+
+\begin{figure}[htbp]
+    \centering
+    \begin{adjustbox}{max width=\textwidth, max totalheight=0.78\textheight}
+    \begin{tikzpicture}[
+        font=\footnotesize,
+        node distance=3mm and 6mm,
+        box/.style={draw, rounded corners=2pt, align=center, fill=white,
+            minimum height=7mm, inner sep=2pt, text width=#1},
+        box/.default=34mm,
+        data/.style={draw, align=center, fill=gray!12, minimum height=7mm,
+            text width=#1, trapezium, trapezium left angle=75,
+            trapezium right angle=105, trapezium stretches body},
+        data/.default=30mm,
+        check/.style={draw, diamond, aspect=2.2, align=center, fill=white,
+            inner sep=1pt, text width=22mm},
+        osm/.style={box=#1, fill=green!10},
+        osm/.default=34mm,
+        google/.style={box=#1, fill=blue!8},
+        google/.default=34mm,
+        arrow/.style={-{Stealth[length=2mm]}, thick},
+        tag/.style={font=\scriptsize, fill=white, inner sep=1pt},
+    ]
+        \node[data] (net) {Unedited SUMO network\\and OSM extract};
+        \node[data, right=18mm of net] (plans) {eqasim \texttt{output\_plans}\\and MATSim network};
+        \node[box, below=of net] (correct) {\textbf{Filtering}\\rules C1--C5,\\tram access};
+        \node[box, below=of plans] (demand) {\textbf{Demand cut}\\follow routes, trim to\\the connected network};
+        \node[data, below=of correct] (corrected) {Corrected network};
+        \node[data, below=of demand] (scale) {Car, van and truck trips\\07:00--08:00, sample};
+
+        \coordinate (mid) at ($(corrected.south)!0.5!(scale.south)$);
+        \node[osm=46mm, below=7mm of mid] (osmstep) {\textbf{OpenStreetMap step}\\connect links that stop where\\OpenStreetMap continues};
+        \node[box=52mm, below=of osmstep] (sim) {\textbf{Simulate the National demand}\\vehicles stuck for 120\,s (stage 1)\\or 300\,s (stage 2) are teleported;\\counted from SUMO statistics};
+        \node[check, below=of sim] (stuck) {Vehicles stuck?};
+
+        \node[google=27mm, below=9mm of stuck] (turns) {\textbf{Turn genes}\\Google disagrees\\with the network};
+        \node[google=27mm, left=4mm of turns] (lanes) {\textbf{Lane genes}\\wrong-lane movement\\Google drives};
+        \node[box=27mm, right=4mm of turns] (bans) {\textbf{Ban genes}\\lane-change bans\\near wrong-lane stops};
+
+        \node[box=60mm, below=of turns] (evolve) {\textbf{Evolutionary search}\\8 individuals, 2 elites, uniform crossover,\\one gene flipped, at most 6 generations};
+        \node[box=46mm, below=of evolve] (score) {Build network, simulate, score\\stuck vehicles + unroutable trips};
+        \node[osm=46mm, below=of score] (review) {\textbf{OpenStreetMap review}\\reject a new link to nowhere\\or a split network};
+        \node[check, below=of review] (better) {Better\\network?};
+
+        \node[osm=56mm, below=6mm of better] (final) {\textbf{Final check}\\OpenStreetMap check and simulation};
+        \node[check, below=of final] (stage) {Stage 1\\(sample)?};
+        \node[box=40mm, left=8mm of stage] (scaleup) {\textbf{Scale to full population}\\\(\times\,1/\)sample share,\\clones \(\pm 30\,\mathrm{min}\), free ends\\moved \(\le 500\,\mathrm{m}\) to homes\\and workplaces};
+        \node[box=40mm, anchor=north west] (behaviour) at ($(stage.east |- stage.north)+(8mm,0)$)
+            {\textbf{Stage 3a: signal timing}\\Webster from the full\\demand, actuated, max\\green \(1.25\times\); short\\edges with collisions joined};
+        \node[google=40mm, below=of behaviour] (calib) {\textbf{Stage 3b: driver behaviour}\\11 genes, 6 individuals,\\2 elites, 3 generations;\\score: teleported \% + not\\inserted \% + travel-time\\bias beyond \(\pm 10\,\%\)};
+        \node[box=40mm, below=of calib] (hotspots) {\textbf{Hotspots and counts}\\second seed; approaches\\stuck in both runs; GEH\\against Zürich counts};
+        \node[box=40mm, left=8mm of hotspots] (result) {\textbf{Result at full traffic}\\network errors, capacity,\\teleported share, travel\\time against Google, vs.\\the unrepaired network};
+
+        \draw[arrow] (net) -- (correct);
+        \draw[arrow] (correct) -- (corrected);
+        \draw[arrow] (plans) -- (demand);
+        \draw[arrow] (demand) -- (scale);
+        \draw[arrow] (corrected.south) |- ($(osmstep.north)+(0,4mm)$) -- (osmstep.north);
+        \draw[arrow] (scale.south) |- ($(osmstep.north)+(0,4mm)$) -- (osmstep.north);
+        \draw[arrow] (osmstep) -- (sim);
+        \draw[arrow] (sim) -- (stuck);
+        \draw[arrow] (stuck) -- node[tag, right, pos=0.25] {yes} (turns);
+        \draw[arrow] (stuck.south) -- ++(0,-4mm) -| (lanes.north);
+        \draw[arrow] (stuck.south) -- ++(0,-4mm) -| (bans.north);
+        \draw[arrow] (lanes.south) -- (lanes.south |- evolve.north);
+        \draw[arrow] (turns) -- (evolve);
+        \draw[arrow] (bans.south) -- (bans.south |- evolve.north);
+        \draw[arrow] (evolve) -- (score);
+        \draw[arrow] (score) -- (review);
+        \draw[arrow] (review) -- (better);
+        \draw[arrow] (better) -- node[tag, right, pos=0.8] {no} (final);
+        \draw[arrow] (final) -- (stage);
+        \draw[arrow] (stage.east) -- node[tag, above] {no} (stage.east -| behaviour.west);
+        \draw[arrow] (behaviour) -- (calib);
+        \draw[arrow] (calib) -- (hotspots);
+        \draw[arrow] (hotspots) -- (result);
+
+        \draw[arrow] (review.east) -- ++(12mm,0) |- node[tag, pos=0.25, rotate=90, anchor=south] {next individual} (evolve.east);
+        \draw[arrow] (better.west) -- node[tag, above] {yes: next round} ++(-38mm,0) |- (osmstep.west);
+        \draw[arrow] (stuck.east) -- node[tag, above] {no} ++(38mm,0) |- (final.east);
+        \draw[arrow, dashed] (stage.west) -- node[tag, above] {yes} (scaleup.east);
+        \draw[arrow, dashed] (scaleup.west) -- ++(-4mm,0) |- node[tag, pos=0.25, rotate=90, anchor=south] {stage 2: same rounds at full traffic} ($(osmstep.west)+(0,2mm)$);
+
+        \begin{scope}[on background layer]
+            \node[draw=gray, dashed, rounded corners=4pt, inner sep=3mm,
+                fit=(osmstep) (sim) (stuck) (lanes) (bans) (evolve) (review) (better),
+                label={[font=\scriptsize\itshape, anchor=south west, align=left]south west:one round\\stage 1: up to 10\\stage 2: up to 3}] {};
+        \end{scope}
+    \end{tikzpicture}
+    \end{adjustbox}
+    \caption{Filtering, evolutionary repair, and behaviour calibration.
+    Stage~1 repairs the network with the sampled National demand;
+    stage~2 repeats the rounds with the demand scaled to the full
+    population, starting from the repaired network; stage~3 sets the
+    signal timing from the full demand and then calibrates driver
+    behaviour on that network without changing it. Green steps compare the network with OpenStreetMap, and
+    blue steps use Google Routes.}
+    \label{fig:repair-flow}
+\end{figure}
+
+A network without stuck vehicles in this simulation is not proven
+correct on the ground. Each kept edit is supported by Google or by
+OpenStreetMap, but Google and OpenStreetMap can disagree with each
+other; at the A1/A4 Nordumfahrung, for example, the lane connection
+that Google drives is not the one given by the OpenStreetMap
+\texttt{destination:lanes} tags. The kept edits are therefore listed
+with the results so that they can be checked individually.
+
+% ===== (C) replaces the empty \subsection{Demand Transfer and Trip Retention} =====
+\subsection{Demand Transfer and Trip Retention}
+\label{subsec:demand-transfer}
+
+The car demand for SUMO is taken from two files of the eqasim
+National scenario: the selected plans in \texttt{output\_plans.xml.gz}
+and the MATSim network of the same run. Legs with the modes car and truck are used.
+Instead of matching the origin and destination of each trip, the
+converter follows the MATSim route of each leg link by link. This keeps
+traffic that only passes through Zürich, which an origin and
+destination filter would lose.
+
+Each MATSim link is converted from the Swiss LV95 coordinates to the
+coordinates of the SUMO network. It is assigned to the SUMO passenger
+edge nearest to its midpoint, provided that the edge lies within
+\(40\,\mathrm{m}\) and runs within \(45^\circ\) of the link's
+direction. The time at which the vehicle reaches each link is taken
+from the free-flow travel times along the route, stretched so that
+they add up to the travel time MATSim recorded for the leg. Where a
+route leaves the SUMO network for more than \(300\,\mathrm{s}\) and
+returns, it is split into separate pieces. Each piece becomes one SUMO
+trip, departing when the vehicle enters the network. A trip is kept
+when it enters the network between 07:00 and 08:00. Legs that started
+up to three hours earlier are read as well, so that long trips that
+reach Zürich within the hour are included.
+
+The ends of each piece are then trimmed to the largest strongly
+connected part of the SUMO passenger network, in which every edge can
+be reached from every other. Snapping at the boundary of the network
+can otherwise place a trip on a short stub with no way in or out. A
+piece whose first and last edges are the two directions of one street
+only touched the boundary and is dropped, as is a piece that is left
+with fewer than two edges. Cars, vans, and trucks are written as
+separate vehicle types. The light commercial vehicles of eqasim
+(agents \texttt{lcv\_*}, mode truck) are vans of \(6.5\,\mathrm{m}\);
+the other trucks are \(12\,\mathrm{m}\) long, with a maximum speed of
+\(25\,\mathrm{m/s}\). For the sampled demand every trip enters on
+the lane that best suits its route and at the highest speed that is
+safe at that point, so that vehicles joining a motorway at the boundary
+do not start from a standstill.
+
+The converter reports how many route pieces were kept unchanged,
+trimmed, or dropped for each of these reasons.
+Table~\ref{tab:demand-retention} lists the counts for the morning
+hour.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Route pieces of the National car and truck demand that
+    enter the Zürich network between 07:00 and 08:00.}
+    \label{tab:demand-retention}
+    \begin{tabular}{lr}
+        \toprule
+        Outcome & Pieces \\
+        \midrule
+        Kept unchanged & \tbd{kept} \\
+        Trimmed to the connected network & \tbd{trimmed} \\
+        Only touches the boundary & \tbd{boundary} \\
+        Too short after trimming & \tbd{too short} \\
+        Off the main network & \tbd{off} \\
+        \midrule
+        SUMO trips written & \tbd{trips} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Scaling to the Full Population}
+\label{subsec:demand-scaling}
+
+The sampled trips are scaled to the full population with the method of
+\citet[Section~3.3.3]{baggenstos2026}. The scale factor is the inverse
+of the sample share, which is read from the eqasim run configuration
+(\texttt{sampleSize} in \texttt{output\_config.xml}); for a share of
+\tbd{0.1} the factor is \tbd{10}.
+
+\paragraph{Trip cloning.} Every original trip is kept unchanged, and
+the factor minus one clones are added. A clone's identifier is that of
+its original with a clone number appended, so that each clone can be
+traced back to its source trip.
+
+\paragraph{Temporal perturbation.} The departure of each clone is
+shifted by an offset drawn uniformly from
+\(\pm 30\,\mathrm{min}\). \citet{baggenstos2026} keeps a clone when the
+shifted time lies in the simulated day. Here only one hour is
+simulated, so a clone is kept when it departs between 07:00 and 08:00.
+For this, the trips are cut as in Section~\ref{subsec:demand-transfer}
+but for 06:30 to 08:30. The originals outside the hour are not
+simulated; only their clones can be shifted into it, as clones near
+midnight are in the daily run. The expected number of trips in the hour
+is then the factor times the sampled trips of the hour.
+
+\paragraph{Spatial perturbation.} The free ends of each clone are moved
+within \(500\,\mathrm{m}\) of the original ends. An end is free when it
+lies at an activity, that is, when the vehicle is on the SUMO network
+within \(60\,\mathrm{s}\) of leaving or reaching its activity; an end
+where the route crosses the network boundary stays fixed. As in
+Table~4 of \citet{baggenstos2026}, a trip inside the network moves both
+ends, an entering trip its end, a leaving trip its start, and a
+pass-through trip neither.
+
+\paragraph{Amenity-based relocation.} The new end is drawn from the
+home, work, and education locations of the eqasim agents within the
+radius, weighted by the number of agents at each location. eqasim
+builds these locations from STATPOP and STATENT, the registers
+\citet{baggenstos2026} uses directly. Where the circle holds no
+location, a uniform point in it is used. The point is placed on the
+nearest drivable edge of the connected network within
+\(150\,\mathrm{m}\), the distance \citet{baggenstos2026} uses for
+internal trips; a point with no edge in reach is drawn again, at most
+twenty times, before the original edge is kept. All random draws use a
+fixed seed (30), so the scaled demand is reproducible. As in his SUMO
+set-up, every scaled trip enters on the best lane at the average speed
+of that lane.
+
+% ===== (D) replaces \subsection{Turning movements checked against Google} and \subsection{Remaining gridlocks}, including the table =====
+\subsection{Repair with the National Demand}
+\label{sec:national-repair}
+
+Stage~1 of the repair (Section~\ref{subsubsec:evolutionary-turns}) was
+run with the sampled National demand of \tbd{trips} trips. The
+corrected network produced \tbd{stuck} stuck vehicles and \tbd{n}
+unroutable trips in the first round. The search ran for \tbd{rounds}
+rounds and kept \tbd{n} turn edits, \tbd{n} lane connections, and
+lifted \tbd{n} lane-change bans. The OpenStreetMap step connected
+\tbd{n} links. The final OpenStreetMap check found
+\tbd{no link to nowhere, and the network is connected}.
+Table~\ref{tab:repair-edits} lists the kept edits.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Edits kept by the evolutionary repair.}
+    \label{tab:repair-edits}
+    \begin{tabular}{llll}
+        \toprule
+        Edit & Street & From & To \\
+        \midrule
+        \tbd{add lane} & \tbd{street} & \texttt{\tbd{edge}} & \texttt{\tbd{edge}} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\subsection{Full-Traffic Check}
+\label{sec:full-traffic}
+
+With the demand scaled to the full population, \tbd{trips} trips are
+due to enter the network during the hour, of which SUMO inserted
+\tbd{inserted}. Table~\ref{tab:full-traffic} compares the unrepaired
+network, the network repaired in stage~1, the network after stage~2,
+the same network with the Webster signals, and with the calibrated
+behaviour of stage~3. A vehicle counts as stuck after
+\(300\,\mathrm{s}\) without moving. All numbers are taken from SUMO's
+statistic output.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Stuck vehicles, teleported share, and travel time with the
+    National demand scaled to the full population.}
+    \label{tab:full-traffic}
+    \small
+    \begin{tabular}{@{}p{50mm}rrrrr@{}}
+        \toprule
+        & Unrepaired & Stage 1 & Stage 2 & Signals & Behaviour \\
+        \midrule
+        Teleported: wrong lane & \tbd{n} & \tbd{n} & \tbd{n} & \tbd{n} & \tbd{n} \\
+        Teleported: collision & \tbd{n} & \tbd{n} & \tbd{n} & \tbd{n} & \tbd{n} \\
+        Teleported: queue, yield & \tbd{n} & \tbd{n} & \tbd{n} & \tbd{n} & \tbd{n} \\
+        Teleported share (\%) & \tbd{p} & \tbd{p} & \tbd{p} & \tbd{p} & \tbd{p} \\
+        Not inserted (\% of loaded) & \tbd{p} & \tbd{p} & \tbd{p} & \tbd{p} & \tbd{p} \\
+        Unroutable trips & \tbd{n} & \tbd{n} & \tbd{n} & \tbd{n} & \tbd{n} \\
+        Travel-time bias against Google (\%) & -- & -- & -- & \tbd{b} & \tbd{b} \\
+        Cross-sections with GEH \(<5\) (\%) & -- & -- & -- & -- & \tbd{p} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+The signal variants are compared in Table~\ref{tab:signals}. The
+stage~2 network with SUMO's default behaviour and the Webster signals
+is the first
+individual of stage~3, so its travel-time bias is known as well.
+Table~\ref{tab:behaviour-result} lists the calibrated values.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Signal programs on the stage~2 network with SUMO's default
+    behaviour. The actuated Webster programs are used from here on.}
+    \label{tab:signals}
+    \small
+    \begin{tabular}{@{}lrrrr@{}}
+        \toprule
+        Programs & Teleported (\%) & Not inserted (\%) & Stuck at signals & Time loss (s) \\
+        \midrule
+        Guessed by netconvert & \tbd{p} & \tbd{p} & \tbd{n} & \tbd{t} \\
+        Webster, actuated & \tbd{p} & \tbd{p} & \tbd{n} & \tbd{t} \\
+        Webster, fixed time, coordinated & \tbd{p} & \tbd{p} & \tbd{n} & \tbd{t} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+    \centering
+    \caption{Calibrated driver behaviour (stage~3), checked with a
+    second random seed.}
+    \label{tab:behaviour-result}
+    \begin{tabular}{lrr}
+        \toprule
+        Gene & SUMO default & Calibrated \\
+        \midrule
+        \texttt{tau} & 1.0 & \tbd{v} \\
+        \texttt{sigma} & 0.5 & \tbd{v} \\
+        \texttt{impatience} & 0 & \tbd{v} \\
+        \texttt{jmTimegapMinor} & 1.0 & \tbd{v} \\
+        \texttt{jmIgnoreKeepClearTime} (s) & off & \tbd{v} \\
+        \texttt{lcStrategic} & 1 & \tbd{v} \\
+        \texttt{lcCooperative} & 1 & \tbd{v} \\
+        \texttt{lcAssertive} & 1 & \tbd{v} \\
+        \texttt{lcLookaheadLeft} & 2 & \tbd{v} \\
+        \texttt{time-to-impatience} (s) & 180 & \tbd{v} \\
+        \texttt{ignore-junction-blocker} (s) & off & \tbd{v} \\
+        \midrule
+        Teleported share, seed 23 / seed 42 (\%) & \tbd{p} & \tbd{p} / \tbd{p} \\
+        Not inserted, seed 23 / seed 42 (\%) & \tbd{p} & \tbd{p} / \tbd{p} \\
+        Mean travel time SUMO / Google (min) & \tbd{t} / \tbd{t} & \tbd{t} / \tbd{t} \\
+        Mean relative error, RMSE & \tbd{e} & \tbd{e} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+    \centering
+    \caption{Hotspots: approaches that stop at least five vehicles in
+    both runs of the calibrated behaviour.}
+    \label{tab:gridlocks}
+    \begin{tabular}{llcrr}
+        \toprule
+        Approach and junction & What happened & Signal & Seed 23 & Seed 42 \\
+        \midrule
+        \tbd{approach / junction} & \tbd{kind} & \tbd{yes} & \tbd{n} & \tbd{n} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+% ===== (E) add under \subsection{Limitations and Sources of Uncertainty} =====
+The repair is judged by one simulated morning hour, which starts with
+an empty network. Its score counts vehicles that SUMO teleports after
+\(120\,\mathrm{s}\) (stage~1) or \(300\,\mathrm{s}\) (stages~2 and~3)
+without moving, which depends on SUMO's lane-changing and junction
+models as well as on the network. The full traffic is obtained by
+cloning the sampled trips. The clones are spread over
+\(\pm 30\,\mathrm{min}\) and their free ends over \(500\,\mathrm{m}\),
+but they keep the boundary crossings of their originals, so the
+through traffic is more concentrated than in reality. MATSim instead
+scales road capacity down to the sample, so its congestion and SUMO's
+are not directly comparable.
+
+Each edit is supported by Google Routes or OpenStreetMap, but the two
+sources disagree at some junctions, and neither has been checked on
+site. The behaviour calibration fits one parameter set for all drivers
+to sixty Google travel times from one morning, with a single seed in
+the search; the calibrated values describe this network and demand,
+not drivers in general. The signal programs are not the programs of the
+city: their phases are those netconvert guessed, and their timing
+follows Webster's method from the simulated demand, so a hotspot at a
+traffic light can come from the timing as much as from the junction.
+Lane-change bans are respected by the routes chosen before departure;
+a vehicle that is rerouted later can still be sent onto a route that
+the bans make impossible, except near the edges where this was found.
+The hotspots that remain at full
+traffic (Table~\ref{tab:gridlocks}) cannot be removed by changing turns,
+lanes, signal timing, or behaviour. They are capacity limits of the modelled network,
+such as a missing lane or a junction with too little throughput, and
+they bound how far the full-traffic results can be read at those
+locations.
