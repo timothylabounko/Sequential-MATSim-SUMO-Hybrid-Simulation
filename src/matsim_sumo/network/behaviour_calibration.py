@@ -370,10 +370,12 @@ def score(
     collision_weight: float = 0.0,
     collision_baseline: float = 0.0,
     teleport_weight: float = 1.0,
+    travel_time_weight: float = 1.0,
 ) -> float:
     if teleported is None or not_inserted is None:
         return float("inf")
     penalty = max(0.0, abs(bias) - tolerance) if bias is not None else 100.0
+    penalty *= travel_time_weight
     extra_collisions = collision_weight * max(0.0, collisions - collision_baseline)
     return round(teleport_weight * teleported + not_inserted + penalty + extra_collisions, 3)
 
@@ -491,6 +493,7 @@ class Search:
             getattr(self.args, "collision_weight", 0.0),
             self.collision_baseline,
             getattr(self.args, "teleport_weight", 1.0),
+            getattr(self.args, "travel_time_weight", 1.0),
         )
 
     def set_collision_baseline(self, individual: Individual) -> float:
@@ -768,6 +771,12 @@ def main(argv: list[str] | None = None) -> None:
         help="Fitness points per collision above the SUMO default driver's collisions",
     )
     parser.add_argument("--teleport-weight", type=float, default=1.0, help="Weight of the teleported share in the fitness")
+    parser.add_argument(
+        "--travel-time-weight",
+        type=float,
+        default=1.0,
+        help="Weight of the travel-time bias against Google; 0 scores gridlocks only and asks Google nothing",
+    )
     parser.add_argument("--timezone", default="Europe/Zurich", help="Time zone of the simulated morning, for Google")
     parser.add_argument("--morning", default="07:00", help="Local time at which the simulation starts, for Google")
     parser.add_argument(
@@ -811,8 +820,12 @@ def main(argv: list[str] | None = None) -> None:
     print("reading the network for the travel-time sample", flush=True)
     net = sumolib.net.readNet(str(args.net))
     cache_path = args.google_cache or args.work_dir / "google-times.json"
-    sample = sample_trips(args.routes, net, args.sample, args.end / 2, args.seed, cached_trips(read_cache(cache_path)))
-    missing = [trip for trip in sample if trip["id"] not in read_cache(cache_path)]
+    if args.travel_time_weight > 0:
+        sample = sample_trips(args.routes, net, args.sample, args.end / 2, args.seed, cached_trips(read_cache(cache_path)))
+        missing = [trip for trip in sample if trip["id"] not in read_cache(cache_path)]
+    else:
+        print("travel-time weight 0: drivers are scored on gridlocks only, no Google travel times", flush=True)
+        sample, missing = [], []
     if missing:
         api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
         if not api_key:
@@ -823,7 +836,7 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(f"Google rejected GOOGLE_MAPS_API_KEY: {exc}") from exc
         print(f"asking Google for {len(missing)} sampled trips not in {cache_path}", flush=True)
         google_reference(sample, cache_path, api_key, args.timezone, dt.time.fromisoformat(args.morning))
-    else:
+    elif sample:
         print(f"every sampled trip is in {cache_path}: no Google request", flush=True)
     times = sample_times(read_cache(cache_path), sample)
     (args.work_dir / "google-times.json").write_text(json.dumps(times, indent=1), encoding="utf-8")

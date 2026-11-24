@@ -17,9 +17,11 @@ import random
 import re
 import shutil
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,13 +38,17 @@ from matsim_sumo.network.osm_connectivity import (
 )
 from matsim_sumo.network.osm_zurich import find_netconvert, find_sumo_home, strip_newer_vclasses
 from matsim_sumo.network.turn_evolution import (
+    NETWORK_ERROR_KINDS,
     Maneuver,
     TurnEdit,
     edits_from_readings,
     evolve,
+    kind_weight,
+    line_kind,
     parse_gridlocks,
     reading_from_route,
     summarise,
+    weighted_score,
 )
 from matsim_sumo.network.zurich_correction import direction_band, signed_deflection_degrees
 
@@ -204,6 +210,43 @@ def apply_patch(source_net: Path, patch: str, output_net: Path) -> None:
     output_net.write_text(strip_newer_vclasses(staged.read_text(encoding="utf-8")), encoding="utf-8")
 
 
+def _run_sumo(command: list[str], start_score: float, network_weight: float, stop_above: float | None, timeout: int):
+    """Run SUMO; with ``stop_above``, stop it once its score passes that value.
+
+    The score is ``start_score`` plus every stuck vehicle SUMO reports on its
+    error stream, weighted as in ``weighted_score``. Returns the exit code,
+    the end of SUMO's output and the score at which SUMO was stopped (None
+    when it ran to the end).
+    """
+    if stop_above is None:
+        completed = subprocess.run(command, text=True, capture_output=True, timeout=timeout)
+        return completed.returncode, completed.stdout + completed.stderr, None
+    process = subprocess.Popen(
+        command, text=True, errors="replace", stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+    )
+    timer = threading.Timer(timeout, process.kill)
+    timer.start()
+    tail: deque[str] = deque(maxlen=40)
+    score = start_score
+    stopped_at = None
+    try:
+        for line in process.stderr:
+            tail.append(line)
+            kind = line_kind(line)
+            if kind is None:
+                continue
+            score += kind_weight(kind, network_weight)
+            if score > stop_above:
+                stopped_at = score
+                process.kill()
+                break
+        process.stderr.close()
+        process.wait()
+    finally:
+        timer.cancel()
+    return (0 if stopped_at is not None else process.returncode), "".join(tail), stopped_at
+
+
 def gridlock_count(
     net_path: Path,
     routes: Path,
@@ -212,7 +255,9 @@ def gridlock_count(
     teleport_s: int = 120,
     sumo_options: tuple[str, ...] = (),
     statistics: bool = False,
-) -> int:
+    network_weight: float = 1.0,
+    stop_above: float | None = None,
+) -> float:
     """Count stuck vehicles after repairing routes on the edited network.
 
     Deleting a turn invalidates routes that used it. Those trips are repaired
@@ -221,6 +266,12 @@ def gridlock_count(
     dropping cars. A vehicle counts as stuck once it has not moved for
     ``teleport_s`` seconds. With ``statistics`` SUMO also writes
     ``<log>.stats.xml``, which holds the number of inserted vehicles.
+
+    The score counts a network error (``NETWORK_ERROR_KINDS``) and an
+    unroutable trip ``network_weight`` times (``weighted_score``). With
+    ``stop_above`` the simulation stops as soon as the score is higher; the
+    network cannot be better than that any more, and the score at that
+    moment is returned.
     """
     log_path.parent.mkdir(parents=True, exist_ok=True)
     repaired = log_path.with_suffix(".rou.xml")
@@ -275,10 +326,17 @@ def gridlock_count(
     ]
     if statistics:
         command += ["--statistic-output", str(log_path.with_suffix(".stats.xml"))]
-    completed = subprocess.run(command, text=True, capture_output=True, timeout=3600)
-    if completed.returncode != 0:
-        raise RuntimeError((completed.stdout + completed.stderr)[-1500:])
-    return len(parse_gridlocks(log_path.read_text(encoding="utf-8", errors="replace"))) + unroutable
+    if stop_above is not None and network_weight * unroutable > stop_above:
+        log_path.write_text("", encoding="utf-8")
+        return network_weight * unroutable
+    returncode, output, stopped_at = _run_sumo(
+        command, network_weight * unroutable, network_weight, stop_above, timeout=3600
+    )
+    if returncode != 0:
+        raise RuntimeError(output[-1500:])
+    if stopped_at is not None:
+        return stopped_at
+    return weighted_score(parse_gridlocks(log_path.read_text(encoding="utf-8", errors="replace")), unroutable, network_weight)
 
 
 def inserted_vehicles(log_path: Path) -> int | None:
@@ -290,14 +348,21 @@ def inserted_vehicles(log_path: Path) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def stuck_edge_ids(log_text: str, kind: str | None = None) -> list[str]:
-    """Edges with stuck vehicles, the most stuck vehicles first."""
+def stuck_edge_ids(log_text: str, kind: str | None = None, kinds: tuple[str, ...] | None = None) -> list[str]:
+    """Edges with stuck vehicles (of ``kind``, or of any of ``kinds``), the most stuck vehicles first."""
     counts: dict[str, int] = {}
     for item in parse_gridlocks(log_text):
         if item.edge.startswith(":") or (kind is not None and item.kind != kind):
             continue
+        if kinds is not None and item.kind not in kinds:
+            continue
         counts[item.edge] = counts.get(item.edge, 0) + 1
     return sorted(counts, key=lambda edge: -counts[edge])
+
+
+def network_errors_first(log_text: str) -> list[str]:
+    """Edges with stuck vehicles: those with a network error first, then the rest, each most stuck first."""
+    return list(dict.fromkeys(stuck_edge_ids(log_text, kinds=NETWORK_ERROR_KINDS) + stuck_edge_ids(log_text)))
 
 
 def nearby_edge_ids(net, edge_ids: list[str], depth: int) -> list[str]:
@@ -527,6 +592,11 @@ def search_network(
     route_file: Path | None = None,
     teleport_s: int = 120,
     effort: int = 0,
+    workers: int = 1,
+    network_weight: float = 1.0,
+    options_for=None,
+    google_cache: Path | None = None,
+    early_stop: bool = True,
 ) -> dict:
     """Query Google at stuck approaches and search the supported edits.
 
@@ -541,10 +611,19 @@ def search_network(
     nothing better. Each step widens the search: more stuck approaches, the
     approaches up to ``effort`` junctions around them, a longer lane-change
     ban lookahead, more lane genes, and a larger and longer evolution.
+
+    Approaches with a network error (wrong lane, no connection, collision)
+    are asked about first, and the fitness counts each network error and
+    unroutable trip ``network_weight`` times. ``workers`` candidate networks
+    are simulated at the same time. ``options_for(net_path, label)`` gives
+    the extra SUMO options of a candidate (signals, drivers). With
+    ``early_stop`` a candidate's simulation stops once its score is above
+    ``baseline_score``: the round only keeps a network below it.
     """
     work_dir.mkdir(parents=True, exist_ok=True)
+    google_cache = google_cache or work_dir / "google-cache.json"
     net = sumolib.net.readNet(str(source_net))
-    stuck = stuck_edge_ids(log_text)
+    stuck = network_errors_first(log_text)
     approaches = stuck[: MAX_STUCK_APPROACHES * (1 + effort)]
     if effort:
         approaches += nearby_edge_ids(net, stuck[:MAX_STUCK_APPROACHES], effort)[: MAX_STUCK_APPROACHES * effort]
@@ -553,7 +632,7 @@ def search_network(
     for edge_id in approaches:
         if net.hasEdge(edge_id):
             candidates.extend(candidates_for_edge(net, edge_id))
-    readings = query_candidates(candidates, api_key, work_dir / "google-cache.json", route_fn)
+    readings = query_candidates(candidates, api_key, google_cache, route_fn)
     maneuvers = [candidate.maneuver for candidate in candidates]
     supported = edits_from_readings(maneuvers, readings)
     by_key = {(candidate.maneuver.from_edge, candidate.maneuver.to_edge): candidate for candidate in candidates}
@@ -565,7 +644,7 @@ def search_network(
     for group in ban_groups:
         print(f"lane-change ban gene: {' '.join(group)}", flush=True)
     moves = lane_movement_candidates(net, log_text, route_file, banned)[: MAX_LANE_GENES * (1 + effort)]
-    move_readings = query_candidates([candidate for candidate, _count in moves], api_key, work_dir / "google-cache.json", route_fn)
+    move_readings = query_candidates([candidate for candidate, _count in moves], api_key, google_cache, route_fn)
     lane_moves: list[dict] = []
     for (candidate, vehicles), reading in zip(moves, move_readings):
         (from_lane, to_lane), = candidate.lane_pairs
@@ -589,7 +668,7 @@ def search_network(
         if reading.possible:
             paired.append((TurnEdit("add lane", candidate.maneuver), candidate))
     gene_count = len(paired) + len(ban_groups)
-    baseline = float(len(parse_gridlocks(log_text)) if baseline_score is None else baseline_score)
+    baseline = float(weighted_score(parse_gridlocks(log_text), 0, network_weight) if baseline_score is None else baseline_score)
     cache: dict[tuple[bool, ...], float] = {tuple(False for _ in range(gene_count)): baseline}
 
     def split(chromosome: tuple[bool, ...]) -> tuple[list, list[tuple[str, ...]]]:
@@ -612,18 +691,31 @@ def search_network(
             return cache[chromosome]
         label = "".join("1" if bit else "0" for bit in chromosome)
         net_path = work_dir / f"{label}.net.xml"
+        stopped = ""
         try:
             if any(chromosome):
                 build(chromosome, net_path)
             else:
                 net_path = source_net
-            count = gridlock_count(net_path, routes, work_dir / f"{label}.log", end_s, teleport_s)
+            options = tuple(options_for(net_path, label)) if options_for else ()
+            count = gridlock_count(
+                net_path,
+                routes,
+                work_dir / f"{label}.log",
+                end_s,
+                teleport_s,
+                sumo_options=options,
+                network_weight=network_weight,
+                stop_above=baseline if early_stop else None,
+            )
+            if early_stop and count > baseline:
+                stopped = " (stopped early: above the unchanged network)"
         except (RuntimeError, OSError) as exc:
             print(f"fitness {label} failed: {exc}", flush=True)
             count = 10**9
         score = count + EDIT_PENALTY * sum(chromosome)
         cache[chromosome] = score
-        print(f"fitness {label} = {count}", flush=True)
+        print(f"fitness {label} = {count:g}{stopped}", flush=True)
         return score
 
     source = sumolib.net.readNet(str(source_net))
@@ -691,6 +783,7 @@ def search_network(
             generations=6 + 2 * effort,
             patience=2 + effort,
             review_fn=osm_accepts,
+            workers=workers,
         )
     selected, lifted = split(tuple(result["best"])) if gene_count else ([], [])
     best_net = work_dir / "best.net.xml"

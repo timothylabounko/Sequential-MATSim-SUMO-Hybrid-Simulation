@@ -10,6 +10,7 @@
 # TO is the round folder; results go to TO/behaviour/. START_BEHAVIOUR is an
 # earlier round's behaviour/ folder whose best drivers start this search.
 # GOOGLE_TIMES is a shared google-times.json so every round compares the same trips.
+# TRAVEL_TIME_WEIGHT=0 scores the drivers on gridlocks only, without Google travel times.
 set -euo pipefail
 
 BUNDLE="$(cd "$(dirname "$0")/.." && pwd)"
@@ -65,10 +66,11 @@ fi
     --timezone "${CITY_TIMEZONE:-Europe/Zurich}" --morning "${DEMAND_FROM:-07:00:00}" \
     --genes "${GENES:-}" --seeds "${SEEDS:-23,42}" \
     --teleport-weight "${TELEPORT_WEIGHT:-10}" --collision-weight "${COLLISION_WEIGHT:-1}" \
+    --travel-time-weight "${TRAVEL_TIME_WEIGHT:-1}" \
     --population "${POPULATION:-6}" --generations "${GENERATIONS:-3}" \
     --workers "${WORKERS:-2}" --carry "${CARRY:-3}" \
     ${SEARCH_SEED:+--search-seed "$SEARCH_SEED"} \
-    "${START_ARGS[@]}" 2>&1 | tee "$TO/behaviour/run.txt"
+    ${START_ARGS[@]+"${START_ARGS[@]}"} 2>&1 | tee "$TO/behaviour/run.txt"
 
 echo "=== where, when and which vehicles are still stuck in the best run ==="
 BEST="$("$PY" -c 'import json, sys; print(json.load(open(sys.argv[1]))["best"]["label"])' "$TO/behaviour/summary.json")"
@@ -78,5 +80,7 @@ mkdir -p "$TO/diagnostics"
     --output-dir "$TO/diagnostics" 2>&1 | tee "$TO/diagnostics/run.txt"
 echo "open the best run in the GUI: sumo-gui -c $SIM/$TO/behaviour/best.sumocfg"
 if [[ "$TO" =~ ^(.*[^0-9])([0-9]+)$ ]]; then
-    echo "next round: TO=${BASH_REMATCH[1]}$(( 10#${BASH_REMATCH[2]} + 1 )) START_BEHAVIOUR=$TO/behaviour bash $BUNDLE/scripts/mac_zero_teleports.sh"
+    next_to="${BASH_REMATCH[1]}$((10#${BASH_REMATCH[2]} + 1))"
+    printf 'next round: TO=%s START_BEHAVIOUR=%s/behaviour bash %s/scripts/mac_zero_teleports.sh\n' \
+        "$next_to" "$TO" "$BUNDLE"
 fi
