@@ -1,8 +1,11 @@
 """Repair the junctions that keep stopping vehicles, with rules that hold for any city.
 
-Reads the network of the signal stage, its signal programs, and the two runs
-(one per seed) of the best setting of the driver-behaviour search. Every edit
-comes from what those runs show; nothing is taken from inspecting one city.
+Part of stage 3 (signals and intersections). Reads the network of the signal
+stage, its signal programs, and two runs of the SUMO default driver on it, one
+per seed of ``--seeds`` (23 and 42), simulated here (``default-seed*``) with the
+settings of ``simulation.py``. With ``--behaviour`` the two runs of the best
+setting of a behaviour search are read instead. Every edit comes from what
+those runs show; nothing is taken from inspecting one city.
 
 1. Short links. A link shorter than ``JOIN_M`` lies between two junctions that
    act as one. Where at least ``MIN_STUCK`` vehicles were stuck at those two
@@ -18,13 +21,15 @@ comes from what those runs show; nothing is taken from inspecting one city.
 
 The signal programs are then carried over link by link, signals left without
 a program get Webster's, and the repaired network is simulated once with the
-SUMO default driver (``plain.*``), which the zero-teleport rounds start from.
+SUMO default driver (``plain.*``), whose stuck places the OpenStreetMap
+priority and lane continuations of ``zero_teleport_repair`` start from.
 ``persistent.csv`` lists every edit and the vehicles behind it.
 """
 
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import csv
 import gzip
 import json
@@ -53,6 +58,8 @@ MIN_STUCK = 2
 UNBAN_UPSTREAM_M = 500.0
 NOT_JOINED = ("rail_crossing", "rail_signal", "dead_end", "district")
 SEED = 23
+SEEDS = (23, 42)
+DEFAULT_ROUTES = Path("default-routes") / "routed.rou.xml"
 
 
 def junction_of(net, lane: str) -> str | None:
@@ -150,11 +157,45 @@ def behaviour_runs(behaviour: Path) -> list[Path]:
     return [behaviour / label, behaviour / "best-seed-check"]
 
 
+def default_run_dirs(out: Path, seeds: tuple[int, ...] = SEEDS) -> list[Path]:
+    return [out / f"default-seed{seed}" for seed in seeds]
+
+
+def default_runs(net: Path, signals: Path, trips: Path, out: Path, seeds: tuple[int, ...], end: int, teleport: int,
+                 workers: int = 2, simulate_fn=simulate, route_fn=route_trips) -> list[Path]:
+    """One run of the SUMO default driver per seed, with its warnings and last routes; finished runs are kept."""
+    routes = out / DEFAULT_ROUTES
+    if not routes.is_file():
+        print("routing the trips on the network of the signal stage", flush=True)
+        route_fn(net, trips, routes)
+    run_dirs = default_run_dirs(out, seeds)
+
+    def run(seed: int, run_dir: Path) -> None:
+        if (run_dir / "sim.stats.xml").is_file():
+            return
+        run_dir.mkdir(parents=True, exist_ok=True)
+        print(f"simulating the SUMO default driver, seed {seed}", flush=True)
+        simulate_fn(net, routes, run_dir / "sim.log", end, teleport, (signals,), (
+            "--vehroute-output", str(run_dir / "vehroutes.xml.gz"),
+            "--vehroute-output.last-route", "true",
+            "--vehroute-output.write-unfinished", "true",
+        ), seed)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        list(pool.map(run, seeds, run_dirs))
+    return run_dirs
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--net", type=Path, required=True, help="Network of the signal stage (read only)")
     parser.add_argument("--signals", type=Path, required=True, help="Signal programs of --net")
-    parser.add_argument("--behaviour", type=Path, required=True, help="Work folder of the driver-behaviour search")
+    parser.add_argument(
+        "--behaviour", type=Path, help="Work folder of a driver-behaviour search whose best runs are read (default: "
+        "runs of the SUMO default driver, simulated here)"
+    )
+    parser.add_argument("--seeds", default=",".join(map(str, SEEDS)), help="Seeds of the default-driver runs")
+    parser.add_argument("--workers", type=int, default=2, help="Default-driver runs at the same time")
     parser.add_argument("--trips", type=Path, required=True, help="Full-demand trips for the plain run")
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--end", type=int, default=3600)
@@ -164,11 +205,19 @@ def main(argv: list[str] | None = None) -> None:
     out = args.out_dir
     out.mkdir(parents=True, exist_ok=True)
 
+    if args.behaviour:
+        run_dirs = [path for path in behaviour_runs(args.behaviour) if (path / "sim.log").is_file()]
+        fallback_routes = args.behaviour / "routes" / "routed.rou.xml"
+        source = f"the behaviour search in {args.behaviour}"
+    else:
+        seeds = tuple(dict.fromkeys(int(item) for item in args.seeds.split(",") if item.strip()))
+        run_dirs = default_runs(args.net, args.signals, args.trips, out, seeds, args.end, args.teleport, args.workers)
+        fallback_routes = out / DEFAULT_ROUTES
+        source = "the default-driver runs"
+    if len(run_dirs) < 2:
+        raise SystemExit(f"{source} gave fewer than two runs")
     print(f"reading {args.net}", flush=True)
     net = sumolib.net.readNet(str(args.net))
-    run_dirs = [path for path in behaviour_runs(args.behaviour) if (path / "sim.log").is_file()]
-    if len(run_dirs) < 2:
-        raise SystemExit(f"the behaviour search in {args.behaviour} has fewer than two runs of its best setting")
     logs = [(path / "sim.log").read_text(encoding="utf-8", errors="replace") for path in run_dirs]
     runs = [stuck_events(text) for text in logs]
     print(f"stuck vehicles in the two runs: {', '.join(str(len(events)) for events in runs)}", flush=True)
@@ -187,7 +236,7 @@ def main(argv: list[str] | None = None) -> None:
                      "vehicles": " / ".join(map(str, row["stuck_per_run"]))})
 
     def routes_of(path: Path) -> Path | None:
-        for routes in (path / "vehroutes.xml.gz", args.behaviour / "routes" / "routed.rou.xml"):
+        for routes in (path / "vehroutes.xml.gz", fallback_routes):
             if routes.is_file():
                 try:
                     for _event, _element in ET.iterparse(gzip.open(routes) if routes.suffix == ".gz" else routes):

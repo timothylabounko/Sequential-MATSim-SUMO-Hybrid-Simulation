@@ -4,16 +4,22 @@
 ``scripts/mac_zero_teleport_pipeline.sh`` uses to decide whether to go on:
 
 * a behaviour search (``DIR/behaviour/summary.json``): its best setting, the
-  mean of its seeds;
+  mean of its seeds; the signal calibration writes the same file for its
+  accepted signals;
 * a plain run (``DIR/plain.stats.xml``);
 * a route assignment (``DIR/assignment.json``): the check, mean of its seeds;
-* a network repair (``DIR/summary.json`` of ``national_repair``): its final run;
+* a network repair (``DIR/summary.json`` of ``national_repair``): the run of
+  its best round, whose network is ``final.net.xml``;
 * the no-teleport run (``DIR/final.json``): always 0.
 
 ``table`` writes ``progress.csv`` with one row per iteration of all stages:
 the demand level, teleported vehicles, inserted vehicles, their share, and the
 lowest share reached so far at that demand level. Shares at different demand
 levels are not compared, so the lowest share starts again at every level.
+A signal-calibration iteration gives its best candidate, and the share of
+counting cross-sections with GEH < 5 when the calibration had the counts.
+Results that are not carried forward (a calibration candidate that was not
+accepted, the driver of the behaviour search) do not lower the lowest share.
 """
 
 from __future__ import annotations
@@ -67,8 +73,9 @@ def _row(stage: int, step: str, teleported: float | None, inserted: float | None
 def repair_rows(stage: int, work_dir: Path) -> list[dict]:
     summary = _json(work_dir / "summary.json")
     routed = routed_vehicles(work_dir)
+    best = summary.get("best_round")
     return [
-        _row(stage, f"round {r['round']}", r.get("stuck"), r.get("inserted") or routed)
+        _row(stage, f"round {r['round']}{' (best)' if r['round'] == best else ''}", r.get("stuck"), r.get("inserted") or routed)
         for r in summary.get("rounds", [])
     ]
 
@@ -77,6 +84,24 @@ def level_percent(work_dir: Path) -> int | None:
     """Demand level of a repair folder named like ``level-025``."""
     match = re.search(r"(\d+)$", work_dir.name)
     return int(match.group(1)) if match else None
+
+
+def calibration_rows(report: dict) -> list[dict]:
+    """One row per signal-calibration iteration after the start: its best candidate."""
+    by_iteration: dict[int, list[dict]] = {}
+    for item in report["iterations"]:
+        by_iteration.setdefault(item["iteration"], []).append(item)
+    rows = []
+    for iteration in sorted(k for k in by_iteration if k > 0):
+        best = min(by_iteration[iteration], key=lambda item: item["score"])
+        kept = "accepted" if best.get("accepted") else "not accepted"
+        row = _row(5, f"signal calibration {iteration} (step {best['step']:g}, {kept})", best["teleports"], best["inserted"])
+        row["not_inserted_percent"] = best["not_inserted_percent"]
+        row["carried"] = bool(best.get("accepted"))
+        if best.get("geh"):
+            row["geh_under_5_percent"] = best["geh"]["under_5_percent"]
+        rows.append(row)
+    return rows
 
 
 def table(args) -> list[dict]:
@@ -96,27 +121,35 @@ def table(args) -> list[dict]:
         summary = _json(args.signals / "summary.json")
         result = summary["results"][summary["variant"]]
         rows.append(_row(3, "signal timing", result["teleports"], result["inserted"]))
-    if args.behaviour and (args.behaviour / "summary.json").is_file():
-        best = _json(args.behaviour / "summary.json")["best"]
-        rows.append(_row(3, "driver behaviour (best)", best["teleports"], best["inserted"]))
     if args.junctions and (args.junctions / "plain.stats.xml").is_file():
         stats = read_statistics(args.junctions / "plain.stats.xml")
         rows.append(_row(3, "persistent junctions", stats["teleports"], stats["inserted"]))
+    intersections = getattr(args, "intersections", None)
+    if intersections and (intersections / "plain.stats.xml").is_file():
+        stats = read_statistics(intersections / "plain.stats.xml")
+        rows.append(_row(3, "OpenStreetMap priority", stats["teleports"], stats["inserted"]))
+    # Legacy: a standalone behaviour folder from older runs (before stage 4 owned the search).
+    if getattr(args, "behaviour", None) and (args.behaviour / "summary.json").is_file():
+        best = _json(args.behaviour / "summary.json")["best"]
+        rows.append(dict(_row(4, "driver behaviour (legacy folder)", best["teleports"], best["inserted"]), carried=False))
     for index, round_dir in enumerate(args.rounds or [], 1):
         summary_path = round_dir / "behaviour" / "summary.json"
         if summary_path.is_file():
             best = _json(summary_path)["best"]
-            rows.append(_row(4, f"zero-teleport round {index}", best["teleports"], best["inserted"]))
+            rows.append(_row(4, f"driver behaviour round {index}", best["teleports"], best["inserted"]))
+    calibration = getattr(args, "calibration", None)
+    if calibration and (calibration / "calibration.json").is_file():
+        rows += calibration_rows(_json(calibration / "calibration.json"))
     if args.assignment and (args.assignment / "assignment.json").is_file():
         report = _json(args.assignment / "assignment.json")
         for item in report["iterations"]:
-            rows.append(_row(5, f"assignment iteration {item['iteration']}", item["teleports"], item["inserted"]))
+            rows.append(_row(6, f"assignment iteration {item['iteration']}", item["teleports"], item["inserted"]))
         check = list(report["check"].values())
-        rows.append(_row(5, "check of the chosen routes", _mean([r["teleports"] for r in check]), _mean([r["inserted"] for r in check])))
+        rows.append(_row(6, "check of the chosen routes", _mean([r["teleports"] for r in check]), _mean([r["inserted"] for r in check])))
     if args.final and (args.final / "final.json").is_file():
         results = list(_json(args.final / "final.json")["results"].values())
         inserted = _mean([r["inserted"] for r in results])
-        row = _row(6, "teleporting off", 0.0, inserted)
+        row = _row(7, "teleporting off", 0.0, inserted)
         front = _mean([r["stuck_front"] for r in results])
         row["stood_still_300s"] = front
         row["stood_still_percent"] = round(100.0 * front / inserted, 2) if inserted else None
@@ -128,7 +161,7 @@ def table(args) -> list[dict]:
         row["iteration"] = number
         level = row["demand_percent"]
         share = row["teleported_percent"]
-        if share is not None:
+        if share is not None and row.get("carried", True):
             lowest[level] = share if lowest.get(level) is None else min(lowest[level], share)
         row["lowest_so_far_percent"] = lowest.get(level)
     return rows
@@ -140,10 +173,10 @@ def main(argv: list[str] | None = None) -> None:
     one = commands.add_parser("teleports", help="Teleport count of one stage folder")
     one.add_argument("stage_dir", type=Path)
     many = commands.add_parser("table", help="progress.csv over all stages")
-    for name in ("stage1", "stage2", "signals", "behaviour", "junctions", "assignment", "final"):
+    for name in ("stage1", "stage2", "signals", "behaviour", "junctions", "intersections", "calibration", "assignment", "final"):
         many.add_argument(f"--{name}", type=Path)
     many.add_argument("--levels", type=Path, nargs="*", help="Repair folders of the demand levels in order (level-NNN)")
-    many.add_argument("--rounds", type=Path, nargs="*", help="Zero-teleport round folders in order")
+    many.add_argument("--rounds", type=Path, nargs="*", help="Driver-behaviour round folders in order")
     many.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
@@ -152,7 +185,7 @@ def main(argv: list[str] | None = None) -> None:
         return
     rows = table(args)
     fields = ["iteration", "stage", "demand_percent", "step", "teleported", "inserted", "teleported_percent",
-              "lowest_so_far_percent", "stood_still_300s", "stood_still_percent"]
+              "lowest_so_far_percent", "not_inserted_percent", "geh_under_5_percent", "stood_still_300s", "stood_still_percent"]
     with args.output.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
@@ -160,7 +193,9 @@ def main(argv: list[str] | None = None) -> None:
     for row in rows:
         share = "-" if row["teleported_percent"] is None else f"{row['teleported_percent']:.2f} %"
         extra = f", stood still 300 s: {row['stood_still_percent']} %" if "stood_still_percent" in row else ""
-        print(f"  {row['iteration']:2d}  stage {row['stage']}  {row['step']:36s} teleported {share:>8s}"
+        if "geh_under_5_percent" in row:
+            extra += f", not inserted {row['not_inserted_percent']} %, GEH < 5 at {row['geh_under_5_percent']} %"
+        print(f"  {row['iteration']:2d}  stage {row['stage']}  {row['step']:44s} teleported {share:>8s}"
               f"  (lowest so far {row['lowest_so_far_percent']} %){extra}")
     print(f"table: {args.output}")
 

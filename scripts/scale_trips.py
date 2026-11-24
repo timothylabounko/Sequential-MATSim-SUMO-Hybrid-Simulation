@@ -14,6 +14,10 @@ them carries only that share of the real traffic. The scale factor is
   input should be cut with a margin of ``jitter`` seconds on both sides of the
   window (``plans_to_sumo.py --margin``); clones of trips just outside the
   window then move into it, as clones near midnight do in the daily run.
+  With ``--wrap`` the window is one periodic day: a departure outside it is
+  moved by whole windows into it instead of being dropped, so MATSim trips
+  after midnight (24:00-30:00) and clones jittered across midnight become the
+  night traffic at the start of the simulated day.
 * Spatial perturbation: a trip end at an activity is moved within
   ``--radius`` metres (default 500 m); a boundary crossing stays fixed. So an
   inside trip moves both ends, an entering trip its end, a leaving trip its
@@ -158,6 +162,7 @@ def scale_trips(
     snap: float = 150.0,
     depart_lane: str | None = "best",
     depart_speed: str | None = "avg",
+    wrap: bool = False,
 ) -> tuple[list[ET.Element], list[ET.Element], dict[str, int]]:
     rng = random.Random(seed)
     whole = math.floor(scale)
@@ -173,8 +178,13 @@ def scale_trips(
             clone = ET.Element("trip", dict(trip.attrib))
             depart_k = depart + rng.uniform(-jitter, jitter) if k else depart
             if not 0 <= depart_k < window:
-                counts["original outside the window" if not k else "clone outside the window"] += 1
-                continue
+                if not wrap:
+                    counts["original outside the window" if not k else "clone outside the window"] += 1
+                    continue
+                depart_k %= window
+                counts["original wrapped into the window" if not k else "clone wrapped into the window"] += 1
+                if not k:
+                    clone.set("depart", f"{depart_k:.2f}")
             if k:
                 clone.set("id", f"{trip.get('id')}_x{k}")
                 clone.set("depart", f"{depart_k:.2f}")
@@ -205,6 +215,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--matsim-config", type=Path, help="EQASIM output_config.xml(.gz) to read the sample share from")
     parser.add_argument("--jitter", type=float, default=1800.0, help="Departure offset of a clone, ± seconds")
     parser.add_argument("--window", type=float, default=3600.0, help="Simulated window in seconds")
+    parser.add_argument("--wrap", action="store_true", help="Move departures outside the window into it by whole windows (a periodic day)")
     parser.add_argument("--endpoints", type=Path, help="Trip ends written by plans_to_sumo.py --endpoints")
     parser.add_argument("--amenities", type=Path, help="Locations written by plans_to_sumo.py --amenities")
     parser.add_argument("--net", type=Path, help="SUMO network, needed to move trip ends")
@@ -232,7 +243,8 @@ def main(argv: list[str] | None = None) -> None:
         snapper = EdgeSnapper(args.net)
     root = ET.parse(args.input).getroot()
     types, trips, counts = scale_trips(
-        root, args.scale, args.jitter, args.window, args.seed, ends, snapper, amenities, args.radius, args.snap
+        root, args.scale, args.jitter, args.window, args.seed, ends, snapper, amenities, args.radius, args.snap,
+        wrap=args.wrap,
     )
     out = ET.Element("routes")
     out.extend(types + trips)

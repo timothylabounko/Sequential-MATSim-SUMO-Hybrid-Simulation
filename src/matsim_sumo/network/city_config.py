@@ -31,7 +31,7 @@ DEFAULTS = {
         "osm": "",
     },
     "demand": {"from": "07:00:00", "to": "08:00:00", "modes": "car,truck", "levels": [0.25, 0.5, 1.0], "sample_share": 0.0},
-    "validation": {"counts": "", "count_year": 2024},
+    "validation": {"counts": "", "count_year": 2024, "counts_file": ""},
 }
 AREA_KEYS = ("west", "south", "east", "north")
 
@@ -50,6 +50,7 @@ def load(path: Path) -> dict:
     base = path.parent
     for key in ("work_dir", "matsim_dir", "sumo_net", "osm"):
         config["inputs"][key] = _path(config["inputs"][key], base)
+    config["validation"]["counts_file"] = _path(config["validation"]["counts_file"], base)
     matsim_dir = Path(config["inputs"]["matsim_dir"]) if config["inputs"]["matsim_dir"] else base
     for key in ("matsim_plans", "matsim_network", "matsim_config"):
         config["inputs"][key] = _path(config["inputs"][key], matsim_dir)
@@ -100,6 +101,7 @@ def shell_exports(config: dict) -> list[str]:
         "SAMPLE_SHARE": f"{float(config['demand']['sample_share']):g}",
         "COUNTS": config["validation"]["counts"],
         "COUNT_YEAR": str(config["validation"]["count_year"]),
+        "COUNTS_FILE": config["validation"]["counts_file"],
     }
     return [f"export {key}={shlex.quote(value)}" for key, value in values.items()]
 

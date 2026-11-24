@@ -134,3 +134,46 @@ def test_signal_links_follow_the_new_numbering():
     matches = zt.link_matches(old, new)
     assert zt.carried_state("GGr", matches) == "GgGr"
     assert zt.carried_state("ryG", matches) == "ryyG"
+
+
+def test_behaviour_genes_cover_driving_and_rerouting():
+    assert set(bc.GROUPS) == {"car-following", "lane-changing", "junction", "rerouting"}
+    assert "lcAssertive" in bc.GROUPS["lane-changing"]
+    assert "lcSpeedGain" in bc.GROUPS["lane-changing"]
+    assert "device.rerouting.period" in bc.GROUPS["rerouting"]
+    assert "device.rerouting.probability" in bc.GROUPS["rerouting"]
+    lane = bc.active_genes("lane-changing,rerouting")
+    names = [bc.GENES[index].name for index in lane]
+    assert names == list(bc.GROUPS["lane-changing"]) + list(bc.GROUPS["rerouting"])
+
+
+def test_rerouting_genes_reach_the_sumocfg():
+    import tempfile
+    from pathlib import Path
+
+    from matsim_sumo.network.simulation import write_config
+
+    individual = list(bc.default_individual())
+    for index, gene in enumerate(bc.GENES):
+        if gene.name == "device.rerouting.period":
+            individual[index] = 120
+        if gene.name == "lcAssertive":
+            individual[index] = 2.5
+    individual = tuple(individual)
+    options = bc.sumo_options(individual)
+    assert "--device.rerouting.period" in options
+    assert options[options.index("--device.rerouting.period") + 1] == "120"
+    assert 'lcAssertive="2.5"' in bc.with_behaviour('<routes><vType id="car"/></routes>', individual)
+    with tempfile.TemporaryDirectory() as folder:
+        config = write_config(
+            Path(folder) / "best.sumocfg",
+            Path(folder) / "net.xml",
+            Path(folder) / "routes.xml",
+            3600,
+            300,
+            extra=tuple(options),
+            seed=23,
+        )
+        text = config.read_text(encoding="utf-8")
+        assert '<device.rerouting.period value="120"/>' in text
+        assert '<device.rerouting.probability value="1"/>' in text

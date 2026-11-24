@@ -42,3 +42,19 @@ def test_depart_lane_and_speed_and_fractional_scale():
     assert all(t.get("departLane") == "best" and t.get("departSpeed") == "avg" for t in trips)
     _, unscaled, _counts = scale_trips.scale_trips(ET.fromstring(SOURCE), 1, 30, 3600)
     assert [t.get("id") for t in unscaled] == ["a", "b"]
+
+
+def test_wrap_folds_departures_after_midnight_into_the_day():
+    source = """<routes>
+    <trip id="late" type="car" depart="88200.00" from="e1" to="e2"/>
+    <trip id="early" type="car" depart="60.00" from="e3" to="e4"/>
+</routes>"""
+    _, dropped, _counts = scale_trips.scale_trips(ET.fromstring(source), 10, 1800, 86400)
+    assert "late" not in {t.get("id") for t in dropped}
+    _, trips, counts = scale_trips.scale_trips(ET.fromstring(source), 10, 1800, 86400, wrap=True)
+    assert len(trips) == 20
+    late = next(t for t in trips if t.get("id") == "late")
+    assert late.get("depart") == "1800.00"
+    assert all(0 <= float(t.get("depart")) < 86400 for t in trips)
+    assert counts["original wrapped into the window"] == 1
+    assert counts["clone wrapped into the window"] > 0

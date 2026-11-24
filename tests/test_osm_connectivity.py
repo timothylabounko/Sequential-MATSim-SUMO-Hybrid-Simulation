@@ -74,10 +74,9 @@ class OsmConnectivityTest(unittest.TestCase):
         reviewed = [chromosome for kind, chromosome in calls if kind == "review"]
         self.assertIn((False,), reviewed)
         self.assertIn((True,), reviewed)
-        self.assertEqual(len(calls) % 2, 0)
-        for index in range(0, len(calls), 2):
-            self.assertEqual(calls[index], ("fitness", calls[index + 1][1]))
-            self.assertEqual(calls[index + 1][0], "review")
+        for index, (kind, chromosome) in enumerate(calls):
+            if kind == "review":
+                self.assertIn(("fitness", chromosome), calls[:index])
         self.assertEqual(result["best"], (True,))
         self.assertEqual(result["best_fitness"], 3)
         self.assertNotEqual(result["best"], (False,))

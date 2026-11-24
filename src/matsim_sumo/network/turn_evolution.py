@@ -19,6 +19,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -33,6 +34,7 @@ NO_CONNECTION_RE = re.compile(
 )
 DIRECT_DETOUR_FACTOR = 2.5
 DIRECT_DETOUR_METRES = 250.0
+NETWORK_ERROR_KINDS = ("wrong lane", "no connection", "collision")
 
 
 @dataclass(frozen=True)
@@ -90,6 +92,30 @@ def parse_gridlocks(log_text: str) -> list[Gridlock]:
     return found
 
 
+def line_kind(line: str) -> str | None:
+    """The kind of stuck vehicle one SUMO message line reports, as ``parse_gridlocks`` counts it."""
+    teleport = TELEPORT_RE.search(line)
+    if teleport:
+        return teleport.group(1)
+    if COLLISION_RE.search(line):
+        return "collision"
+    if NO_CONNECTION_RE.search(line):
+        return "no connection"
+    return None
+
+
+def kind_weight(kind: str, network_weight: float) -> float:
+    return network_weight if kind in NETWORK_ERROR_KINDS else 1.0
+
+
+def weighted_score(gridlocks: list[Gridlock], unroutable: int, network_weight: float = 1.0) -> float:
+    """Stuck vehicles with every network error (and every trip without a route) counted ``network_weight`` times.
+
+    With ``network_weight`` 1 this is the plain count of stuck vehicles and unroutable trips.
+    """
+    return sum(kind_weight(item.kind, network_weight) for item in gridlocks) + network_weight * unroutable
+
+
 def direct_movement_possible(route_m: float, direct_m: float) -> bool:
     """A short TomTom route uses the movement. A long detour does not."""
     if direct_m <= 0:
@@ -131,6 +157,7 @@ def evolve(
     generations: int = 6,
     patience: int = 2,
     review_fn=None,
+    workers: int = 1,
 ) -> dict:
     """Search subsets of the supported edits. Lower fitness is better.
 
@@ -144,6 +171,11 @@ def evolve(
     individuals, crosses the rest uniformly, and flips one gene. It stops
     after ``patience`` iterations without a better accepted fitness, or after
     ``generations``, or when the best fitness is zero.
+
+    ``workers`` individuals of an iteration are scored at the same time, so
+    ``fitness_fn`` must be safe to call from several threads. The reviews run
+    one after another, in population order, and every random draw happens
+    outside the scoring, so the search is the same for any ``workers``.
     """
     if edit_count < 0:
         raise ValueError("edit_count must be non-negative")
@@ -162,17 +194,20 @@ def evolve(
     def fresh() -> tuple[bool, ...]:
         return tuple(bool(rng.randrange(2)) for _ in range(edit_count))
 
-    def evaluate(person: tuple[bool, ...]) -> tuple[tuple[bool, ...], float, bool]:
-        score = _fitness_of(person, fitness_fn)
-        accepted = review_fn is None or bool(review_fn(person))
-        if not accepted:
-            score = 10**12
-        return person, score, accepted
+    def evaluate_all(people: list[tuple[bool, ...]]) -> list[tuple[tuple[bool, ...], float, bool]]:
+        unique = list(dict.fromkeys(people))
+        if workers > 1 and len(unique) > 1:
+            with ThreadPoolExecutor(max_workers=min(workers, len(unique))) as pool:
+                scores = dict(zip(unique, pool.map(lambda person: _fitness_of(person, fitness_fn), unique)))
+        else:
+            scores = {person: _fitness_of(person, fitness_fn) for person in unique}
+        reviews = {person: review_fn is None or bool(review_fn(person)) for person in unique}
+        return [(person, scores[person] if reviews[person] else 10**12, reviews[person]) for person in people]
 
     population = [tuple(False for _ in range(edit_count)), fresh()]
     while len(population) < population_size:
         population.append(fresh())
-    scored = [evaluate(person) for person in population]
+    scored = evaluate_all(population)
 
     def best_accepted(rows: list[tuple[tuple[bool, ...], float, bool]]):
         kept = [row for row in rows if row[2]]
@@ -214,7 +249,7 @@ def evolve(
             genes[flip] = not genes[flip]
             children.append(tuple(genes))
         population = elites + children
-        scored = [evaluate(person) for person in population]
+        scored = evaluate_all(population)
         record = generation_record(scored)
         history.append(record)
         winner = best_accepted(scored)

@@ -212,7 +212,7 @@ def main(argv: list[str] | None = None) -> None:
     seeds = summary.get("seeds") or [FIRST_SEED]
     net, signals = args.round / "repaired.net.xml", args.round / "signals.add.xml"
     individual = driver_individual(best["genes"])
-    driver = tuple(behaviour_options(individual))
+    driver = tuple(behaviour_options(individual, rerouting=False))
     google_file = behaviour / "google-times.json"
     google = {}
     if google_file.is_file():

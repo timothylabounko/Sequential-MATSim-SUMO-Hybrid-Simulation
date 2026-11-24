@@ -27,8 +27,11 @@ run used, and writes one patched network:
    cycle and splits from the routed demand (``--demand``), actuated with
    maximum green 1.25 times Webster's green.
 
-Nothing is simulated here. The behaviour search on the written network
-includes the SUMO default driver, which is the plain-driver check.
+In the pipeline this is the last step of stage 3 (signals and intersections),
+run once on the stuck places of the persistent-junction run at full demand.
+With ``--trips`` the written network is then simulated once with the SUMO
+default driver (``plain.*``). Stage 4 then only searches driver behaviour on
+that fixed network; it does not call this module again.
 """
 
 from __future__ import annotations
@@ -50,6 +53,7 @@ from sumolib.geomhelper import distancePointToPolygon
 
 from matsim_sumo.network.osm_connectivity import _overpass, osm_way_id
 from matsim_sumo.network.signal_timing import NETCONVERT_OPTIONS, plan_programs, webster, write_programs
+from matsim_sumo.network.simulation import route_trips, simulate, write_config
 from matsim_sumo.network.turn_evolution import parse_gridlocks
 
 CONTROL_RADIUS_M = 30.0
@@ -499,6 +503,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--min-yields", type=int, default=2, help="Yield teleports at a junction before OSM is asked")
     parser.add_argument("--demand", type=Path, help="Routed demand for Webster's flows (default: --routes)")
+    parser.add_argument("--trips", type=Path, help="Full-demand trips: simulate the written network once (plain.*)")
+    parser.add_argument("--end", type=int, default=3600)
+    parser.add_argument("--teleport", type=int, default=300)
+    parser.add_argument("--seed", type=int, default=23, help="Seed of the plain run")
     args = parser.parse_args(argv)
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -569,12 +577,21 @@ def main(argv: list[str] | None = None) -> None:
         "untimed_after": sorted(set(untimed) - set(timed)),
         "output": str(output),
     }
-    (args.out_dir / "repair.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print(
         f"wrote {output}: {len(edge_patches)} edge priorities, {len(node_patches)} junction types, "
         f"{len(connections)} lane connections",
         flush=True,
     )
+    if args.trips:
+        signals_file = args.out_dir / "signals.add.xml"
+        routes = args.out_dir / "plain.rou.xml"
+        print("5 one run with the SUMO default driver on the written network", flush=True)
+        route_trips(output, args.trips, routes)
+        stats = simulate(output, routes, args.out_dir / "plain.log", args.end, args.teleport, (signals_file,), seed=args.seed)
+        write_config(args.out_dir / "plain.sumocfg", output, routes, args.end, args.teleport, (signals_file,), seed=args.seed)
+        summary["plain"] = stats
+        print(f"  teleported {stats['teleports']} of {stats['inserted']} inserted ({stats['teleported_percent']} %)", flush=True)
+    (args.out_dir / "repair.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

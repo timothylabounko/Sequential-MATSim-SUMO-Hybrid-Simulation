@@ -51,7 +51,8 @@ def test_behaviour_is_set_on_every_vehicle_type_only():
 def test_options_never_touch_traffic_lights():
     for individual in (bc.default_individual(), bc.baggenstos_individual()):
         assert not any("tls" in option or "red" in option.lower() for option in bc.sumo_options(individual))
-    assert bc.sumo_options(bc.default_individual())[-1] == "-1"
+    options = bc.sumo_options(bc.default_individual())
+    assert options[options.index("--ignore-junction-blocker") + 1] == "-1"
 
 
 def test_fitness_penalises_travel_time_bias_beyond_tolerance():

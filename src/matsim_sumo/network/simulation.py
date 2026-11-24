@@ -25,6 +25,11 @@ a route that needs a lane change the road markings forbid is replaced.
 
 Routes from an iterative assignment (``route_assignment.py``) are simulated
 with ``rerouting=False``: the rerouting device would replace them at departure.
+
+Options in ``extra`` (the calibrated driver of the behaviour stage, e.g. its
+own ``--device.rerouting.probability``) replace the settings above instead of
+being given twice; with ``rerouting=False`` every ``--device.rerouting.*``
+option of ``extra`` is dropped.
 """
 
 from __future__ import annotations
@@ -37,6 +42,7 @@ from pathlib import Path
 from matsim_sumo.network.lane_routes import fix_routes
 
 REROUTING_PERIOD_S = 300
+REROUTING_PREFIX = "--device.rerouting."
 JAM_THRESHOLD_S = 30
 SIMULATION_OPTIONS: tuple[str, ...] = (
     "--device.rerouting.probability",
@@ -124,7 +130,25 @@ def sumo_options(
         options += ["-a", ",".join(str(path.resolve()) for path in additional)]
     if seed is not None:
         options += ["--seed", str(seed)]
-    return options + list(extra)
+    extra = list(extra) if rerouting else without_rerouting(extra)
+    # SUMO refuses an option given twice, so an option in ``extra`` replaces the setting above.
+    replaced = {item for item in extra if item.startswith("--")}
+    kept = [item for flag, value in zip(options[0::2], options[1::2]) if flag not in replaced for item in (flag, value)]
+    return kept + extra
+
+
+def without_rerouting(extra: tuple[str, ...] | list[str]) -> list[str]:
+    """``extra`` without ``--device.rerouting.*`` options and their values."""
+    out: list[str] = []
+    skip = False
+    for item in extra:
+        if skip:
+            skip = False
+        elif item.startswith(REROUTING_PREFIX):
+            skip = True
+        else:
+            out.append(item)
+    return out
 
 
 def simulate(

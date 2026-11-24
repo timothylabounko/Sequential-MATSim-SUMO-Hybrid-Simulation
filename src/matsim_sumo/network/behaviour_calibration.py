@@ -1,13 +1,27 @@
-"""Calibrate driver behaviour on the repaired network at full traffic.
+"""Calibrate driver behaviour on the repaired network at full traffic (stage 4).
 
-Runs after the network repair and the signal timing, so a behaviour setting
-cannot hide a lane or connection error. Only how drivers follow, yield and
-change lanes is changed: the network, its lanes and the signal programs given
-with ``--additional`` are never edited, and no setting lets a driver ignore a
-red light.
+Runs after stage 3 (signals and intersections), so a behaviour setting cannot
+hide a lane, connection or signal error. Only how drivers act on the road is
+changed: the network, its lanes and the signal programs given with
+``--additional`` are never edited, and no setting lets a driver ignore a red
+light.
 
-The genes are SUMO car-following, junction and lane-change parameters, each
-with a range around its SUMO default (``GENES``). An evolutionary search
+The genes (``GENES``), each with a range around its SUMO 1.28 default, come in
+four groups (``GROUPS``):
+
+* car following (Krauss): tau, sigma, minGap, accel, decel, speedFactor,
+  speedDev; minGap, accel and decel are not set on a vehicle type that defines
+  its own (the truck's accel);
+* lane changing and overtaking (LC2013): lcStrategic, lcCooperative,
+  lcSpeedGain, lcKeepRight, lcAssertive, lcLookaheadLeft;
+* junctions: impatience, jmTimegapMinor, jmIgnoreKeepClearTime,
+  ``--time-to-impatience``, and ``--ignore-junction-blocker`` only with
+  ``--collision-weight``;
+* en-route rerouting: ``--device.rerouting.probability``, ``.period``,
+  ``.adaptation-interval`` and ``.adaptation-steps``. They replace the
+  rerouting settings of ``simulation.py``, whose values are their defaults.
+
+An evolutionary search
 (population ``--population``, two elites, tournament selection, uniform
 crossover, one gene redrawn per child) minimises
 
@@ -15,8 +29,11 @@ crossover, one gene redrawn per child) minimises
               + max(0, |travel-time bias| (%) - tolerance)
               + collision weight * max(0, collisions - collisions of the SUMO default driver)
 
-``--genes`` limits the search to some genes; the others keep their SUMO
-default. ``--collision-weight`` (0 by default) stops a setting from trading
+``--genes`` limits the search to some genes or groups; the others keep their
+SUMO default. ``--start`` makes the search one round of several: the best
+drivers of the earlier round (``carry`` in its ``summary.json``) and drivers
+close to them form the first generation instead of random drivers. On the
+same network, signals, trips and seeds their runs are linked, not repeated. ``--collision-weight`` (0 by default) stops a setting from trading
 jams for collisions; collisions the default driver also has are network
 errors, not behaviour, and cost nothing. Wrong-lane teleports are left out of
 the penalty for the same reason. ``--teleport-weight`` (1 by default) makes
@@ -30,7 +47,11 @@ inserted vehicle, and vehicles that could not enter the network before the
 end per loaded vehicle. The travel-time bias compares SUMO with Google Routes
 (traffic-aware, at the same weekday time) on a fixed sample of the simulated
 trips, as Baggenstos (2026) did with TomTom. It stops the search from removing
-congestion that the real network has. The SUMO defaults and the micro settings
+congestion that the real network has. The trips already in the Google cache
+(``--google-cache``, shared by all stages) are sampled first, so every round
+and stage compares the same trips and Google is only asked for trips it has
+not answered; ``google-times.json`` in the work folder holds the sample's
+times for the later stages. The SUMO defaults and the micro settings
 of Baggenstos (``ignore-junction-blocker`` 1 s, ``time-to-impatience`` 30 s)
 start in the first population.
 
@@ -47,11 +68,13 @@ import argparse
 import concurrent.futures
 import csv
 import datetime as dt
+import hashlib
 import json
 import math
 import os
 import random
 import re
+import shutil
 import threading
 import urllib.error
 import urllib.request
@@ -68,6 +91,12 @@ from matsim_sumo.network.simulation import route_trips, simulate, write_config
 from matsim_sumo.network.turn_evolution import parse_gridlocks, summarise
 
 
+CAR_FOLLOWING = "car-following"
+LANE_CHANGING = "lane-changing"
+JUNCTION = "junction"
+REROUTING = "rerouting"
+
+
 @dataclass(frozen=True)
 class Gene:
     name: str
@@ -77,21 +106,43 @@ class Gene:
     where: str  # "vType" attribute or SUMO "option"
     digits: int = 2
     zero_is_off: bool = False  # 0 is written as SUMO's -1 (never)
+    group: str = ""
+    keep_explicit: bool = False  # a vType that sets the attribute itself (the truck's accel) keeps it
 
 
+# Defaults are SUMO 1.28's for a passenger car (Krauss, LC2013), and for the rerouting device the
+# settings of simulation.py, so the default individual drives exactly as the plain runs.
+# lcPushy, lcImpatience and lcTimeToImpatience are not searched: LC2013 does not support them (SL2015 only).
 GENES: tuple[Gene, ...] = (
-    Gene("tau", 0.8, 1.2, 1.0, "vType"),
-    Gene("sigma", 0.1, 0.5, 0.5, "vType"),
-    Gene("impatience", 0.0, 1.0, 0.0, "vType"),
-    Gene("jmTimegapMinor", 0.5, 1.5, 1.0, "vType"),
-    Gene("jmIgnoreKeepClearTime", 0, 60, 0, "vType", 0, zero_is_off=True),
-    Gene("lcStrategic", 0.5, 5.0, 1.0, "vType"),
-    Gene("lcCooperative", 0.5, 1.0, 1.0, "vType"),
-    Gene("lcAssertive", 1.0, 5.0, 1.0, "vType"),
-    Gene("lcLookaheadLeft", 1.0, 4.0, 2.0, "vType"),
-    Gene("time-to-impatience", 30, 300, 180, "option", 0),
-    Gene("ignore-junction-blocker", 0, 60, 0, "option", 0, zero_is_off=True),
+    Gene("tau", 0.8, 1.2, 1.0, "vType", group=CAR_FOLLOWING),
+    Gene("sigma", 0.1, 0.5, 0.5, "vType", group=CAR_FOLLOWING),
+    Gene("minGap", 1.5, 3.0, 2.5, "vType", group=CAR_FOLLOWING, keep_explicit=True),
+    Gene("accel", 2.0, 3.5, 2.6, "vType", group=CAR_FOLLOWING, keep_explicit=True),
+    Gene("decel", 3.5, 5.5, 4.5, "vType", group=CAR_FOLLOWING, keep_explicit=True),
+    Gene("speedFactor", 0.9, 1.15, 1.0, "vType", group=CAR_FOLLOWING),
+    Gene("speedDev", 0.0, 0.2, 0.1, "vType", group=CAR_FOLLOWING),
+    Gene("lcStrategic", 0.5, 5.0, 1.0, "vType", group=LANE_CHANGING),
+    Gene("lcCooperative", 0.5, 1.0, 1.0, "vType", group=LANE_CHANGING),
+    Gene("lcSpeedGain", 0.2, 3.0, 1.0, "vType", group=LANE_CHANGING),
+    Gene("lcKeepRight", 0.1, 2.0, 1.0, "vType", group=LANE_CHANGING),
+    Gene("lcAssertive", 1.0, 5.0, 1.0, "vType", group=LANE_CHANGING),
+    Gene("lcLookaheadLeft", 1.0, 4.0, 2.0, "vType", group=LANE_CHANGING),
+    Gene("impatience", 0.0, 1.0, 0.0, "vType", group=JUNCTION),
+    Gene("jmTimegapMinor", 0.5, 1.5, 1.0, "vType", group=JUNCTION),
+    Gene("jmIgnoreKeepClearTime", 0, 60, 0, "vType", 0, zero_is_off=True, group=JUNCTION),
+    Gene("time-to-impatience", 30, 300, 180, "option", 0, group=JUNCTION),
+    Gene("ignore-junction-blocker", 0, 60, 0, "option", 0, zero_is_off=True, group=JUNCTION),
+    Gene("device.rerouting.probability", 0.0, 1.0, 1.0, "option", group=REROUTING),
+    Gene("device.rerouting.period", 60, 900, 300, "option", 0, group=REROUTING),
+    Gene("device.rerouting.adaptation-interval", 1, 30, 1, "option", 0, group=REROUTING),
+    Gene("device.rerouting.adaptation-steps", 10, 360, 180, "option", 0, group=REROUTING),
 )
+GROUPS: dict[str, tuple[str, ...]] = {
+    group: tuple(gene.name for gene in GENES if gene.group == group)
+    for group in (CAR_FOLLOWING, LANE_CHANGING, JUNCTION, REROUTING)
+}
+# Lets a driver drive through a vehicle blocking the junction: searched only when collisions cost fitness.
+NEEDS_COLLISION_PENALTY = ("ignore-junction-blocker",)
 
 
 def sumo_value(gene: Gene, value: float) -> str:
@@ -122,10 +173,11 @@ def as_dict(individual: Individual) -> dict[str, float]:
     return {gene.name: value for gene, value in zip(GENES, individual)}
 
 
-def sumo_options(individual: Individual) -> list[str]:
+def sumo_options(individual: Individual, rerouting: bool = True) -> list[str]:
+    """The option genes as SUMO options; without the rerouting device for assigned routes (``rerouting=False``)."""
     options = []
     for gene, value in zip(GENES, individual):
-        if gene.where == "option":
+        if gene.where == "option" and (rerouting or gene.group != REROUTING):
             options += [f"--{gene.name}", sumo_value(gene, value)]
     return options
 
@@ -137,10 +189,11 @@ ATTRIBUTE = re.compile(r'(\w+)="([^"]*)"')
 def with_behaviour(routes_text: str, individual: Individual) -> str:
     """The routes text with the vType genes set on every vehicle type."""
     values = {gene.name: sumo_value(gene, value) for gene, value in zip(GENES, individual) if gene.where == "vType"}
+    own = {gene.name for gene in GENES if gene.keep_explicit}
 
     def rewrite(match: re.Match) -> str:
         attributes = dict(ATTRIBUTE.findall(match.group(0)))
-        attributes.update(values)
+        attributes.update({key: value for key, value in values.items() if key not in own or key not in attributes})
         return "<vType " + " ".join(f'{key}="{value}"' for key, value in attributes.items()) + "/>"
 
     text, count = VTYPE.subn(rewrite, routes_text)
@@ -168,16 +221,24 @@ def _end_point(edge, at_end: bool) -> tuple[tuple[float, float], float]:
     return ((bx, by) if at_end else (ax, ay)), heading
 
 
-def sample_trips(routes: Path, net, size: int, before_s: float, seed: int) -> list[dict]:
-    """Fixed random sample of trips that depart early enough to arrive in the window."""
+def sample_trips(routes: Path, net, size: int, before_s: float, seed: int, prefer: tuple[str, ...] = ()) -> list[dict]:
+    """Fixed random sample of trips that depart early enough to arrive in the window.
+
+    Trips named in ``prefer`` (the trips of a Google cache, in its order) come first, so every stage
+    compares the same trips, and Google is only asked for trips it has not answered yet.
+    """
     candidates = []
     for trip in ET.parse(routes).getroot().iter("trip"):
         depart = float(trip.get("depart", "0"))
         frm, to = trip.get("from"), trip.get("to")
         if depart < before_s and net.hasEdge(frm) and net.hasEdge(to) and frm != to:
             candidates.append((trip.get("id"), depart, frm, to))
+    by_id = {candidate[0]: candidate for candidate in candidates}
+    picked = [by_id[vid] for vid in dict.fromkeys(prefer) if vid in by_id][:size]
+    chosen = {candidate[0] for candidate in picked}
+    rest = [candidate for candidate in candidates if candidate[0] not in chosen]
     rng = random.Random(seed)
-    picked = rng.sample(candidates, min(size, len(candidates)))
+    picked += rng.sample(rest, min(size - len(picked), len(rest)))
     sample = []
     for vid, depart, frm, to in picked:
         origin_xy, origin_heading = _end_point(net.getEdge(frm), at_end=False)
@@ -255,6 +316,22 @@ def google_reference(
     return {trip["id"]: cache[trip["id"]] for trip in sample if cache.get(trip["id"])}
 
 
+def read_cache(cache_path: Path) -> dict:
+    return json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.is_file() else {}
+
+
+def cached_trips(cache: dict) -> tuple[str, ...]:
+    """Trips with a Google time in a cache, in the order Google was asked."""
+    return tuple(key for key, value in cache.items() if not key.startswith("_") and value)
+
+
+def sample_times(cache: dict, sample: list[dict]) -> dict:
+    """The cache cut to the sample, in sample order: what the later stages compare with."""
+    times = {"_morning": cache.get("_morning")} if cache.get("_morning") else {}
+    times.update({trip["id"]: cache[trip["id"]] for trip in sample if trip["id"] in cache})
+    return times
+
+
 def sumo_travel_times(tripinfo: Path, ids: set[str]) -> dict[str, float]:
     """Trip durations; a vehicle still driving at the end counts with the time it has driven so far."""
     times = {}
@@ -293,10 +370,12 @@ def score(
     collision_weight: float = 0.0,
     collision_baseline: float = 0.0,
     teleport_weight: float = 1.0,
+    travel_time_weight: float = 1.0,
 ) -> float:
     if teleported is None or not_inserted is None:
         return float("inf")
     penalty = max(0.0, abs(bias) - tolerance) if bias is not None else 100.0
+    penalty *= travel_time_weight
     extra_collisions = collision_weight * max(0.0, collisions - collision_baseline)
     return round(teleport_weight * teleported + not_inserted + penalty + extra_collisions, 3)
 
@@ -327,15 +406,56 @@ def mean_result(runs: list[dict]) -> dict:
 
 
 def active_genes(names: str | None) -> tuple[int, ...]:
-    """Indices of the genes the search may change; all of them when ``names`` is empty."""
+    """Indices of the genes the search may change; all of them when ``names`` is empty.
+
+    ``names`` lists genes or groups of ``GROUPS``, e.g. ``lane-changing,impatience``.
+    """
     if not names:
         return tuple(range(len(GENES)))
     known = {gene.name: index for index, gene in enumerate(GENES)}
     wanted = [name.strip() for name in names.split(",") if name.strip()]
+    wanted = [gene for name in wanted for gene in GROUPS.get(name, (name,))]
     unknown = [name for name in wanted if name not in known]
     if unknown:
-        raise ValueError(f"unknown genes {', '.join(unknown)}; known: {', '.join(known)}")
-    return tuple(sorted(known[name] for name in wanted))
+        raise ValueError(f"unknown genes {', '.join(unknown)}; known: {', '.join([*GROUPS, *known])}")
+    return tuple(sorted({known[name] for name in wanted}))
+
+
+def individual_of(genes: dict[str, float]) -> Individual:
+    """The individual of a ``genes`` dict of a summary; genes it does not name keep their default."""
+    return tuple(genes.get(gene.name, gene.default) for gene in GENES)
+
+
+def carried_individuals(start: Path, search: Search, same_setup: bool) -> list[Individual]:
+    """The best drivers of the round in ``start`` (its ``summary.json``), best first.
+
+    With ``same_setup`` (same network, signals, seeds and settings) their runs are reused; otherwise
+    they are simulated again in this round.
+    """
+    summary = json.loads((start / "summary.json").read_text(encoding="utf-8"))
+    entries = summary.get("carry") or [{"genes": summary["best"]["genes"], "elite": True}]
+    elites = []
+    for entry in entries:
+        individual = individual_of(entry["genes"])
+        if same_setup and entry.get("runs"):
+            runs = {int(seed): run for seed, run in entry["runs"].items()}
+            if search.carry(individual, runs, start):
+                print(f"  carried {entry.get('label')} as {search.label_for(individual)} (fitness {search.results[individual]['fitness']})", flush=True)
+        if entry.get("elite", True):
+            elites.append(individual)
+    return elites
+
+
+def round_setup(args, seeds: tuple[int, ...]) -> dict:
+    """What must be the same for runs of an earlier round to count in this one."""
+    return {
+        "net": str(Path(args.net).resolve()),
+        "signals_sha1": [hashlib.sha1(Path(path).read_bytes()).hexdigest() for path in args.additional],
+        "routes": str(Path(args.routes).resolve()),
+        "seeds": list(seeds),
+        "end_s": args.end,
+        "teleport_after_s": args.teleport,
+    }
 
 
 class Search:
@@ -373,6 +493,7 @@ class Search:
             getattr(self.args, "collision_weight", 0.0),
             self.collision_baseline,
             getattr(self.args, "teleport_weight", 1.0),
+            getattr(self.args, "travel_time_weight", 1.0),
         )
 
     def set_collision_baseline(self, individual: Individual) -> float:
@@ -453,6 +574,38 @@ class Search:
             print(f"{label} mean of seeds {', '.join(map(str, self.seeds))}: {describe(result)} -> fitness {result['fitness']}", flush=True)
         return result
 
+    def carry(self, individual: Individual, runs: dict[int, dict], source: Path) -> bool:
+        """Takes the runs of ``individual`` from an earlier round on the same network, signals and seeds.
+
+        Its run folders in ``source`` are linked under new labels instead of simulated again.
+        """
+        if individual in self.results or any(seed not in runs or "error" in runs[seed] for seed in self.seeds):
+            return False
+        targets = {seed: (source / runs[seed]["label"]).resolve() for seed in self.seeds}
+        if not all((target / "sim.log").is_file() for target in targets.values()):
+            return False
+        base = self.label_for(individual)
+        for seed, target in targets.items():
+            label = base if seed == SUMO_SEED else f"{base}-seed{seed}"
+            link = self.args.work_dir / label
+            if link.is_symlink():
+                link.unlink()
+            elif link.exists():
+                shutil.rmtree(link)
+            link.symlink_to(target, target_is_directory=True)
+            self.runs[(individual, seed)] = {**runs[seed], "label": label, "seed": seed}
+        self.results[individual] = self.combine(individual)
+        return True
+
+    def carry_entry(self, individual: Individual) -> dict | None:
+        """What a later round needs to carry ``individual`` over: its genes and the run of every seed."""
+        runs = {seed: self.runs.get((individual, seed)) for seed in self.seeds}
+        if any(run is None or "error" in run for run in runs.values()):
+            return None
+        result = self.results[individual]
+        return {"label": result["label"], "fitness": result["fitness"], "genes": as_dict(individual),
+                "runs": {str(seed): run for seed, run in runs.items()}}
+
     def evaluate_all(self, individuals: list[Individual]) -> list[dict]:
         todo = [individual for individual in dict.fromkeys(individuals) if individual not in self.results]
         for individual in todo:
@@ -475,6 +628,16 @@ def describe(result: dict) -> str:
     )
 
 
+def nudge(individual: Individual, active: tuple[int, ...], rng: random.Random, genes: int = 2, spread: float = 0.25) -> Individual:
+    """``individual`` with ``genes`` active genes moved by a normal step of ``spread`` times their range."""
+    child = list(individual)
+    for index in rng.sample(active, min(genes, len(active))):
+        gene = GENES[index]
+        value = child[index] + rng.gauss(0.0, spread * (gene.high - gene.low))
+        child[index] = round(min(gene.high, max(gene.low, value)), gene.digits)
+    return tuple(child)
+
+
 def evolve(
     search: Search,
     rng: random.Random,
@@ -482,19 +645,28 @@ def evolve(
     generations: int,
     elites: int = 2,
     active: tuple[int, ...] | None = None,
+    start: list[Individual] | None = None,
 ) -> list[dict]:
+    """Without ``start``: the SUMO default, the Baggenstos settings and random drivers. With ``start``
+    (the best drivers of an earlier round, best first): those, and drivers close to them."""
     active = tuple(range(len(GENES))) if active is None else active
 
     def only_active(individual: Individual) -> Individual:
         return tuple(value if index in active else GENES[index].default for index, value in enumerate(individual))
 
-    seeds = [default_individual(), only_active(baggenstos_individual())]
-    individuals = list(dict.fromkeys(seeds))
+    if start:
+        parents = list(dict.fromkeys(only_active(individual) for individual in start))
+        individuals = list(parents)
+    else:
+        individuals = list(dict.fromkeys([default_individual(), only_active(baggenstos_individual())]))
     tries = 0
     while len(individuals) < population and tries < 50 * population:
         tries += 1
-        drawn = only_active(tuple(draw(gene, rng) for gene in GENES))
-        if drawn not in individuals:
+        if start:
+            drawn = nudge(parents[tries % len(parents)] if tries % 2 else parents[0], active, rng)
+        else:
+            drawn = only_active(tuple(draw(gene, rng) for gene in GENES))
+        if drawn not in individuals and drawn not in search.results:
             individuals.append(drawn)
     history = []
     for generation in range(1, generations + 1):
@@ -580,8 +752,18 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--workers", type=int, default=2, help="Simulations run at the same time")
     parser.add_argument("--sample", type=int, default=60, help="Trips compared with Google")
     parser.add_argument("--tolerance", type=float, default=10.0, help="Travel-time bias allowed without penalty, %%")
-    parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--genes", default="", help="Comma-separated genes to search, e.g. impatience,jmTimegapMinor")
+    parser.add_argument("--seed", type=int, default=7, help="Seed of the Google trip sample")
+    parser.add_argument("--search-seed", type=int, help="Seed of the evolution (default: --seed); another per round")
+    parser.add_argument(
+        "--genes", default="", help=f"Comma-separated genes or groups to search ({', '.join(GROUPS)}); default all"
+    )
+    parser.add_argument(
+        "--start", type=Path, help="Work folder of an earlier round: its best drivers start this round, its runs are reused"
+    )
+    parser.add_argument("--carry", type=int, default=3, help="Best drivers carried over to the next round")
+    parser.add_argument(
+        "--google-cache", type=Path, help="Google times shared by all stages (default: google-times.json in --work-dir)"
+    )
     parser.add_argument(
         "--collision-weight",
         type=float,
@@ -589,6 +771,12 @@ def main(argv: list[str] | None = None) -> None:
         help="Fitness points per collision above the SUMO default driver's collisions",
     )
     parser.add_argument("--teleport-weight", type=float, default=1.0, help="Weight of the teleported share in the fitness")
+    parser.add_argument(
+        "--travel-time-weight",
+        type=float,
+        default=1.0,
+        help="Weight of the travel-time bias against Google; 0 scores gridlocks only and asks Google nothing",
+    )
     parser.add_argument("--timezone", default="Europe/Zurich", help="Time zone of the simulated morning, for Google")
     parser.add_argument("--morning", default="07:00", help="Local time at which the simulation starts, for Google")
     parser.add_argument(
@@ -605,30 +793,62 @@ def main(argv: list[str] | None = None) -> None:
     if SUMO_SEED not in seeds:
         raise SystemExit(f"--seeds must include {SUMO_SEED}, the seed of best.sumocfg")
     seeds = (SUMO_SEED, *[seed for seed in seeds if seed != SUMO_SEED])
+    if args.collision_weight <= 0:
+        left_out = [index for index in active if GENES[index].name in NEEDS_COLLISION_PENALTY]
+        if left_out:
+            print(f"without --collision-weight, {', '.join(GENES[i].name for i in left_out)} keeps its default", flush=True)
+        active = tuple(index for index in active if index not in left_out)
     args.work_dir.mkdir(parents=True, exist_ok=True)
+    setup = round_setup(args, seeds)
+    previous = None
+    if args.start and (args.start / "summary.json").is_file():
+        previous = json.loads((args.start / "summary.json").read_text(encoding="utf-8"))
+    same_setup = previous is not None and previous.get("setup") == setup
 
-    api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
-    if not api_key:
-        raise SystemExit("GOOGLE_MAPS_API_KEY is not set")
-    try:
-        google_route_metres(*KEY_CHECK, api_key)
-    except (RuntimeError, OSError) as exc:
-        raise SystemExit(f"Google rejected GOOGLE_MAPS_API_KEY: {exc}") from exc
-
-    print("routing the trips once (duarouter)", flush=True)
     routed = args.work_dir / "routes" / "routed.rou.xml"
-    unroutable = route_trips(args.net, args.routes, routed)
+    earlier_routes = args.start / "routes" / "routed.rou.xml" if args.start else None
+    if same_setup and earlier_routes.is_file() and "unroutable_trips" in previous:
+        print(f"the trips as routed for {args.start} (same network)", flush=True)
+        routed.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(earlier_routes, routed)
+        unroutable = previous["unroutable_trips"]
+    else:
+        print("routing the trips once (duarouter)", flush=True)
+        unroutable = route_trips(args.net, args.routes, routed)
     print(f"  {unroutable} trips without any path are left out", flush=True)
 
     print("reading the network for the travel-time sample", flush=True)
     net = sumolib.net.readNet(str(args.net))
-    sample = sample_trips(args.routes, net, args.sample, args.end / 2, args.seed)
-    google = google_reference(
-        sample, args.work_dir / "google-times.json", api_key, args.timezone, dt.time.fromisoformat(args.morning)
-    )
+    cache_path = args.google_cache or args.work_dir / "google-times.json"
+    if args.travel_time_weight > 0:
+        sample = sample_trips(args.routes, net, args.sample, args.end / 2, args.seed, cached_trips(read_cache(cache_path)))
+        missing = [trip for trip in sample if trip["id"] not in read_cache(cache_path)]
+    else:
+        print("travel-time weight 0: drivers are scored on gridlocks only, no Google travel times", flush=True)
+        sample, missing = [], []
+    if missing:
+        api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+        if not api_key:
+            raise SystemExit(f"GOOGLE_MAPS_API_KEY is not set, and {len(missing)} sampled trips are not in {cache_path}")
+        try:
+            google_route_metres(*KEY_CHECK, api_key)
+        except (RuntimeError, OSError) as exc:
+            raise SystemExit(f"Google rejected GOOGLE_MAPS_API_KEY: {exc}") from exc
+        print(f"asking Google for {len(missing)} sampled trips not in {cache_path}", flush=True)
+        google_reference(sample, cache_path, api_key, args.timezone, dt.time.fromisoformat(args.morning))
+    elif sample:
+        print(f"every sampled trip is in {cache_path}: no Google request", flush=True)
+    times = sample_times(read_cache(cache_path), sample)
+    (args.work_dir / "google-times.json").write_text(json.dumps(times, indent=1), encoding="utf-8")
+    google = {key: value for key, value in times.items() if not key.startswith("_") and value}
     print(f"google travel times for {len(google)} of {len(sample)} sampled trips", flush=True)
 
     search = Search(args, google, routed, seeds)
+    elites: list[Individual] = []
+    if previous is not None:
+        reuse = "its runs reused" if same_setup else "simulated again (other network, signals or settings)"
+        print(f"round starts from the best drivers of {args.start}, {reuse}", flush=True)
+        elites = carried_individuals(args.start, search, same_setup)
     print(
         f"searching {', '.join(GENES[index].name for index in active)} with seeds {', '.join(map(str, seeds))}; "
         f"teleport weight {args.teleport_weight:g}, {args.collision_weight:g} fitness points per extra collision",
@@ -638,7 +858,8 @@ def main(argv: list[str] | None = None) -> None:
         search.evaluate_all([default_individual()])
         baseline = search.set_collision_baseline(default_individual())
         print(f"SUMO default driver: {baseline:g} collisions; only more than that cost fitness", flush=True)
-    history = evolve(search, random.Random(args.seed), args.population, args.generations, active=active)
+    rng = random.Random(args.seed if args.search_seed is None else args.search_seed)
+    history = evolve(search, rng, args.population, args.generations, active=active, start=elites)
     ranked = sorted(search.results.values(), key=lambda r: (r["fitness"], r["label"]))
     best = ranked[0]
     default = search.results.get(default_individual())
@@ -661,7 +882,21 @@ def main(argv: list[str] | None = None) -> None:
         writer.writerows(spots)
     config = write_gui_config(args.work_dir, args.net, search.routes_text, best_individual, args)
 
+    by_label = {result["label"]: individual for individual, result in search.results.items()}
+    carry = []
+    for result in ranked[: max(args.carry, 1)]:
+        entry = search.carry_entry(by_label[result["label"]])
+        if entry:
+            carry.append({**entry, "elite": True})
+    if default is not None and default_individual() not in [by_label[r["label"]] for r in ranked[: max(args.carry, 1)]]:
+        entry = search.carry_entry(default_individual())
+        if entry:
+            carry.append({**entry, "elite": False})
+
     summary = {
+        "setup": setup,
+        "start": str(args.start) if previous is not None else None,
+        "carry": carry,
         "teleport_after_s": args.teleport,
         "tolerance_percent": args.tolerance,
         "genes_searched": [GENES[index].name for index in active],

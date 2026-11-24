@@ -48,4 +48,6 @@ sample_share = 0.1
 [validation]
 # "zurich" compares the final run with the Zurich traffic counts; empty skips the comparison.
 counts = "zurich"
-count_year = 2024
+count_year = 2026
+# A count file already downloaded (sid_dav_verkehrszaehlung_miv_OD2031_<year>.csv); empty downloads count_year.
+counts_file = "~/Downloads/sid_dav_verkehrszaehlung_miv_od2031_2026.csv"
