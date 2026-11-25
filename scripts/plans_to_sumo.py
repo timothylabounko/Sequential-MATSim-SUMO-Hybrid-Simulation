@@ -1,9 +1,14 @@
-"""Cut EQASIM/MATSim car and truck routes from output_plans.xml.gz to the SUMO Zurich network.
+"""Cut EQASIM/MATSim routes from output_plans.xml.gz to a SUMO network.
 
-Every selected car or truck leg is followed link by link through the MATSim
-network. The part of the route that lies on the SUMO network becomes one SUMO
-trip, departing when the MATSim vehicle reaches the network. That way traffic
-that only crosses Zurich is kept, not just trips that start and end in it.
+Every selected leg is followed link by link through the MATSim network. The
+part of the route that lies on the SUMO network becomes one SUMO trip,
+departing when the vehicle reaches the network. That way traffic that only
+crosses Zurich is kept, not just trips that start and end in it.
+
+``--modes car,truck`` reads the car network and writes passenger types, as
+before. ``--modes bike`` reads MATSim links that allow bikes and writes a
+bicycle type. Bike trips are cut against the bicycle network, in their own
+run, because that network is not the car network.
 """
 
 from __future__ import annotations
@@ -78,11 +83,11 @@ def wgs84_to_utm32(lat: float, lon: float) -> tuple[float, float]:
     return east, north
 
 
-def _allows_passenger(lane: ET.Element) -> bool:
+def _allows(lane: ET.Element, vclass: str) -> bool:
     allow = lane.get("allow")
     if allow is not None:
-        return "passenger" in allow.split() or allow == "all"
-    return "passenger" not in (lane.get("disallow") or "").split()
+        return vclass in allow.split() or allow == "all"
+    return vclass not in (lane.get("disallow") or "").split()
 
 
 def main_component(nodes: list[str], successors: dict[str, set[str]]) -> set[str]:
@@ -148,13 +153,14 @@ def trim_piece(piece: list[tuple], main: set[str]) -> tuple[list[tuple] | None, 
 
 
 class SumoNet:
-    def __init__(self, path: Path, cell: float = 100.0):
+    def __init__(self, path: Path, cell: float = 100.0, vclass: str = "passenger"):
         self.cell = cell
+        self.vclass = vclass
         self.offset = (0.0, 0.0)
         self.boundary = (0.0, 0.0, 0.0, 0.0)
         self.shapes: dict[str, list[tuple[float, float]]] = {}
         self.grid: dict[tuple[int, int], set[str]] = defaultdict(set)
-        passenger_lanes: dict[str, set[str]] = {}
+        allowed_lanes: dict[str, set[str]] = {}
         links: list[tuple[str, str, str, str]] = []
         for _, el in ET.iterparse(path, events=("end",)):
             if el.tag == "location":
@@ -164,16 +170,16 @@ class SumoNet:
             elif el.tag == "edge":
                 if el.get("function") != "internal":
                     lanes = el.findall("lane")
-                    if lanes and any(_allows_passenger(lane) for lane in lanes):
+                    if lanes and any(_allows(lane, vclass) for lane in lanes):
                         shape = [tuple(map(float, p.split(",")[:2])) for p in lanes[0].get("shape").split()]
                         self.shapes[el.get("id")] = shape
-                        passenger_lanes[el.get("id")] = {lane.get("index") for lane in lanes if _allows_passenger(lane)}
+                        allowed_lanes[el.get("id")] = {lane.get("index") for lane in lanes if _allows(lane, vclass)}
                 el.clear()
             elif el.tag == "connection" and not el.get("from", ":").startswith(":"):
                 links.append((el.get("from"), el.get("fromLane"), el.get("to"), el.get("toLane")))
         successors: dict[str, set[str]] = defaultdict(set)
         for frm, frm_lane, to, to_lane in links:
-            if frm_lane in passenger_lanes.get(frm, ()) and to_lane in passenger_lanes.get(to, ()):
+            if frm_lane in allowed_lanes.get(frm, ()) and to_lane in allowed_lanes.get(to, ()):
                 successors[frm].add(to)
         self.main = main_component(list(self.shapes), successors)
         for edge, shape in self.shapes.items():
@@ -218,8 +224,12 @@ class SumoNet:
         return best
 
 
-def read_matsim_network(path: Path, net: SumoNet, margin: float = 3000.0):
-    """Return links and the set of MATSim nodes that lie on the SUMO network."""
+def read_matsim_network(path: Path, net: SumoNet, margin: float = 3000.0, link_mode: str = "car"):
+    """Return links and the set of MATSim nodes that lie on the SUMO network.
+
+    ``link_mode="car"`` keeps today's car links, including a link that does not
+    name its modes. ``link_mode="bike"`` keeps only links that list ``bike``.
+    """
     x0, y0, x1, y1 = net.boundary
     nodes: dict[str, tuple[float, float]] = {}
     links: dict[str, tuple[str, str, float]] = {}
@@ -233,11 +243,26 @@ def read_matsim_network(path: Path, net: SumoNet, margin: float = 3000.0):
                     nodes[a["id"]] = (x, y)
             elif s.startswith("<link "):
                 a = dict(ATTR.findall(s))
-                if "car" not in a.get("modes", "car"):
+                if link_mode == "bike":
+                    if "bike" not in (a.get("modes") or "").split(","):
+                        continue
+                elif "car" not in a.get("modes", "car"):
                     continue
-                free = float(a.get("freespeed") or 13.9) or 13.9
+                free = float(a.get("freespeed") or (4.2 if link_mode == "bike" else 13.9)) or 1.0
                 links[a["id"]] = (a["from"], a["to"], float(a.get("length") or 0) / free)
     return nodes, links
+
+
+def vtype_lines(modes: set[str]) -> list[str]:
+    """SUMO vehicle types for the modes being cut. Car types stay as they were."""
+    lines: list[str] = []
+    if modes & {"car", "truck"}:
+        lines.append('    <vType id="car" vClass="passenger" color="255,220,0"/>\n')
+        lines.append('    <vType id="van" vClass="passenger" length="6.5" guiShape="delivery" color="255,140,0"/>\n')
+        lines.append('    <vType id="truck" vClass="passenger" length="12" accel="1.0" maxSpeed="25" color="255,60,60"/>\n')
+    if modes & {"bike", "bicycle"}:
+        lines.append('    <vType id="bike" vClass="bicycle" length="1.8" width="0.65" maxSpeed="8.3" color="40,160,80"/>\n')
+    return lines
 
 
 def vehicle_type(person: str, mode: str) -> str:
@@ -267,15 +292,20 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--amenities", type=Path, help="CSV: home, work and education locations weighted by agents")
     args = p.parse_args(argv)
     start_s, end_s = clock(args.start), clock(args.end)
-    modes = set(args.modes.split(","))
+    modes = {mode.strip() for mode in args.modes.split(",") if mode.strip()}
+    if "bike" in modes and modes & {"car", "truck"}:
+        raise SystemExit("cut bikes with --modes bike against the bicycle network; car and truck stay a separate run")
+    bike_only = bool(modes) and modes <= {"bike", "bicycle"}
+    link_mode = "bike" if bike_only else "car"
+    vclass = "bicycle" if bike_only else "passenger"
     lo_s, hi_s = start_s - args.margin, end_s + args.margin
 
     print("reading SUMO network", flush=True)
-    net = SumoNet(args.net)
-    print(f"  {len(net.shapes)} drivable edges, {len(net.main)} in the main connected network", flush=True)
+    net = SumoNet(args.net, vclass=vclass)
+    print(f"  {len(net.shapes)} {vclass} edges, {len(net.main)} in the main connected network", flush=True)
     print("reading MATSim network", flush=True)
-    nodes, links = read_matsim_network(args.network, net)
-    print(f"  {len(links)} car links, {len(nodes)} nodes near Zurich", flush=True)
+    nodes, links = read_matsim_network(args.network, net, link_mode=link_mode)
+    print(f"  {len(links)} {link_mode} links, {len(nodes)} nodes near Zurich", flush=True)
 
     link_edge: dict[str, str | None] = {}
 
@@ -409,9 +439,7 @@ def main(argv: list[str] | None = None) -> None:
     counts = defaultdict(int)
     with open(args.output, "w", encoding="utf-8") as out:
         out.write("<routes>\n")
-        out.write('    <vType id="car" vClass="passenger" color="255,220,0"/>\n')
-        out.write('    <vType id="van" vClass="passenger" length="6.5" guiShape="delivery" color="255,140,0"/>\n')
-        out.write('    <vType id="truck" vClass="passenger" length="12" accel="1.0" maxSpeed="25" color="255,60,60"/>\n')
+        out.writelines(vtype_lines(modes))
         for depart, vid, mode, frm, to in trips:
             counts[mode] += 1
             out.write(f'    <trip id="{vid}" type="{mode}" depart="{depart:.2f}" from="{frm}" to="{to}"/>\n')
